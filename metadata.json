@@ -2,5 +2,7 @@
   "name": "KaryaLoka — Portofolio Digital Modern",
   "description": "Platform portofolio digital modern berbasis cloud untuk guru, siswa, tenaga kependidikan, dan profesional.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

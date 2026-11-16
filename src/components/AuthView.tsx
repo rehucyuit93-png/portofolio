@@ -11,7 +11,7 @@ import {
   updateProfile,
   type User,
 } from 'firebase/auth';
-import { auth, googleProvider } from '../lib/firebase';
+import { auth, firebaseConfig, googleProvider } from '../lib/firebase';
 import { ensureUserInitialized, writeAuditLog } from '../lib/portfolioService';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -347,7 +347,18 @@ export const AuthView: React.FC<AuthViewProps> = ({
                       role="alert"
                       className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs leading-relaxed text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-200"
                     >
-                      {authError}
+                      <p>{authError}</p>
+                      {authError.includes('Firebase Console') && (
+                        <a
+                          href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 inline-flex items-center gap-1.5 font-semibold underline hover:text-rose-950 dark:hover:text-white"
+                        >
+                          <span>Buka Firebase Console → Sign-in method</span>
+                          <i className="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true" />
+                        </a>
+                      )}
                     </div>
                   )}
 
