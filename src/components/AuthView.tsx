@@ -56,6 +56,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [resendingVerification, setResendingVerification] = useState(false);
+  const [verificationNote, setVerificationNote] = useState<string | null>(null);
   const [authError, setAuthError] = useState<AuthErrorState | null>(null);
   const [publicSlugLookup, setPublicSlugLookup] = useState('');
 
@@ -149,6 +150,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    setVerificationNote(null);
     setLoading(true);
 
     try {
@@ -159,14 +161,10 @@ export const AuthView: React.FC<AuthViewProps> = ({
         if (cred.user.emailVerified) {
           onNotify('success', 'Selamat datang kembali di KaryaLoka.');
         } else {
-          try {
-            await sendVerificationEmailSafe(cred.user);
-            onNotify('info', 'Email belum terverifikasi. Tautan verifikasi baru telah dikirim ke email Anda.');
-          } catch (verErr: unknown) {
-            const formatted = formatAuthErrorMessage(verErr);
-            setAuthError(formatted);
-            onNotify('info', 'Silakan verifikasi email Anda terlebih dahulu.');
-          }
+          setVerificationNote(
+            'Akun Anda belum terverifikasi. Klik "Kirim Ulang Tautan Verifikasi" jika email belum masuk.'
+          );
+          onNotify('info', 'Silakan verifikasi email Anda terlebih dahulu.');
         }
       } else if (mode === 'register') {
         if (!fullName.trim()) {
@@ -185,6 +183,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
         );
         try {
           await sendVerificationEmailSafe(cred.user);
+          setVerificationNote(
+            `Email verifikasi telah dikirim ke ${cred.user.email} pada ${new Date().toLocaleTimeString('id-ID')}. Periksa Kotak Masuk, folder Spam, atau Promosi (pengirim: noreply@gen-lang-client-0131469651.firebaseapp.com).`
+          );
           onNotify(
             'success',
             'Akun dibuat! Tautan verifikasi telah dikirim ke email Anda. Periksa kotak masuk atau folder spam.'
@@ -285,7 +286,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
           <div id="akses-akun" className="lg:col-span-5 flex flex-col">
             <div className="glass-panel flex-1 rounded-2xl border border-slate-200 p-6 shadow-sm sm:p-8 dark:border-slate-800">
               {unverifiedUser ? (
-                <div className="flex h-full flex-col justify-center space-y-5">
+                <div className="flex h-full flex-col justify-center space-y-4">
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
                     <i className="fa-solid fa-envelope-circle-check text-xl" aria-hidden="true" />
                   </div>
@@ -294,15 +295,21 @@ export const AuthView: React.FC<AuthViewProps> = ({
                       Verifikasi Email Diperlukan
                     </h2>
                     <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                      Kami telah mengirimkan tautan verifikasi ke{' '}
+                      Tautan verifikasi ditujukan ke{' '}
                       <span className="font-semibold text-slate-900 dark:text-white">
                         {unverifiedUser.email}
                       </span>
-                      . Periksa Kotak Masuk atau folder Spam, klik tautan verifikasi, lalu kembali ke halaman ini.
+                      . Periksa Kotak Masuk, folder <strong>Spam</strong>, atau tab <strong>Promosi</strong> untuk pengirim{' '}
+                      <span className="font-mono-tabular text-xs">noreply@gen-lang-client-0131469651.firebaseapp.com</span>.
                     </p>
                   </div>
+                  {verificationNote && (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs leading-relaxed text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/50 dark:text-blue-200">
+                      {verificationNote}
+                    </div>
+                  )}
                   {authError && renderAuthErrorBox(authError)}
-                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2.5">
                     <button
                       type="button"
                       onClick={() => onVerificationRefreshed(false)}
@@ -318,6 +325,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
                         setResendingVerification(true);
                         try {
                           await sendVerificationEmailSafe(unverifiedUser);
+                          setVerificationNote(
+                            `Email verifikasi baru dikirim ke ${unverifiedUser.email} pada ${new Date().toLocaleTimeString('id-ID')}. Jika tidak masuk dalam 1-2 menit, cek folder Spam atau gunakan Login dengan Google.`
+                          );
                           onNotify('success', 'Email verifikasi dikirim ulang. Cek kotak masuk atau folder spam.');
                         } catch (err: unknown) {
                           const formatted = formatAuthErrorMessage(err);
@@ -333,13 +343,23 @@ export const AuthView: React.FC<AuthViewProps> = ({
                     </button>
                     <button
                       type="button"
+                      disabled={loading}
+                      onClick={handleGoogleLogin}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <i className="fa-brands fa-google text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                      <span>Masuk Instan dengan Google (Tanpa Verifikasi Email)</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={async () => {
                         setAuthError(null);
+                        setVerificationNote(null);
                         await onSignOutUnverified();
                       }}
-                      className="text-xs font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                      className="pt-1 text-xs font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                     >
-                      Gunakan Akun Lain / Masuk dengan Google
+                      Kembali ke Halaman Login / Daftar
                     </button>
                   </div>
                 </div>
