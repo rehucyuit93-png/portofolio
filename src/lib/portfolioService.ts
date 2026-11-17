@@ -198,7 +198,7 @@ async function runEnsureUserInitialized(params: {
               : 'Guru'),
         100
       ),
-      photoURL: clampStr(params.photoURL, 1000),
+      photoURL: clampStr(params.photoURL, 200000),
       isActive: true,
     };
     try {
@@ -301,7 +301,7 @@ async function runEnsureUserInitialized(params: {
         education: clampStr(profile.education, 150),
         expertise: clampStr(profile.expertise, 250),
         bio: clampStr(profile.bio, 1500),
-        photoURL: clampStr(profile.photoURL, 1000),
+        photoURL: clampStr(profile.photoURL, 200000),
         isPublished: Boolean(profile.isPublished),
         featuredDocuments: [],
         featuredCertificates: [],
@@ -350,7 +350,7 @@ export async function saveProfile(
     education: clampStr(data.education, 150),
     expertise: clampStr(data.expertise, 250),
     bio: clampStr(data.bio, 1500),
-    photoURL: clampStr(data.photoURL, 1000),
+    photoURL: clampStr(data.photoURL, 200000),
     isPublished: Boolean(data.isPublished),
   };
 
@@ -400,19 +400,25 @@ export async function syncPublicPortfolio(
   const path = `publicPortfolios/${username}`;
   const pubRef = doc(db, 'publicPortfolios', username);
 
-  const payload = {
-    uid: profile.uid,
-    username,
-    fullName: clampStr(profile.fullName, 120) || 'Pengguna',
-    role: role || 'guru',
-    nipNisn: clampStr(profile.nipNisn, 40),
-    jabatanKelas: clampStr(profile.jabatanKelas, 100),
-    education: clampStr(profile.education, 150),
-    expertise: clampStr(profile.expertise, 250),
-    bio: clampStr(profile.bio, 1500),
-    photoURL: clampStr(profile.photoURL, 1000),
-    isPublished: Boolean(profile.isPublished),
-    featuredDocuments: docs
+  const MAX_PUBLIC_BYTES = 750000;
+  let remainingBudget = Math.max(100000, MAX_PUBLIC_BYTES - (profile.photoURL?.length || 0));
+
+  function takeWithinBudget<T extends Record<string, unknown>>(items: T[], sectionMaxBytes: number): T[] {
+    const out: T[] = [];
+    let used = 0;
+    for (const item of items) {
+      const size = JSON.stringify(item).length;
+      if (used + size <= sectionMaxBytes && remainingBudget - size >= 0) {
+        out.push(item);
+        used += size;
+        remainingBudget -= size;
+      }
+    }
+    return out;
+  }
+
+  const featuredDocuments = takeWithinBudget(
+    docs
       .filter((d) => d.isPublic)
       .slice(0, 20)
       .map((d) => ({
@@ -421,10 +427,14 @@ export async function syncPublicPortfolio(
         category: d.category,
         year: d.year,
         fileType: d.fileType,
-        fileUrl: d.fileUrl,
+        fileUrl: d.fileUrl.length > 220000 ? '' : d.fileUrl,
         description: d.description || '',
       })),
-    featuredCertificates: certs
+    180000
+  );
+
+  const featuredCertificates = takeWithinBudget(
+    certs
       .filter((c) => c.isPublic)
       .slice(0, 20)
       .map((c) => ({
@@ -432,10 +442,14 @@ export async function syncPublicPortfolio(
         eventName: c.eventName,
         organizer: c.organizer,
         year: c.year,
-        fileUrl: c.fileUrl,
+        fileUrl: c.fileUrl.length > 220000 ? '' : c.fileUrl,
         description: c.description || '',
       })),
-    featuredAchievements: achs
+    200000
+  );
+
+  const featuredAchievements = takeWithinBudget(
+    achs
       .filter((a) => a.isPublic)
       .slice(0, 20)
       .map((a) => ({
@@ -446,7 +460,11 @@ export async function syncPublicPortfolio(
         photoUrl: a.photoUrl || '',
         description: a.description || '',
       })),
-    featuredGalleries: gals
+    180000
+  );
+
+  const featuredGalleries = takeWithinBudget(
+    gals
       .filter((g) => g.isPublic)
       .slice(0, 24)
       .map((g) => ({
@@ -457,6 +475,25 @@ export async function syncPublicPortfolio(
         imageUrl: g.imageUrl,
         caption: g.caption || '',
       })),
+    remainingBudget
+  );
+
+  const payload = {
+    uid: profile.uid,
+    username,
+    fullName: clampStr(profile.fullName, 120) || 'Pengguna',
+    role: role || 'guru',
+    nipNisn: clampStr(profile.nipNisn, 40),
+    jabatanKelas: clampStr(profile.jabatanKelas, 100),
+    education: clampStr(profile.education, 150),
+    expertise: clampStr(profile.expertise, 250),
+    bio: clampStr(profile.bio, 1500),
+    photoURL: clampStr(profile.photoURL, 200000),
+    isPublished: Boolean(profile.isPublished),
+    featuredDocuments,
+    featuredCertificates,
+    featuredAchievements,
+    featuredGalleries,
     updatedAt: serverTimestamp(),
   };
 

@@ -76,13 +76,14 @@ export const AchievementsSection: React.FC<{
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     setUploading(true);
     try {
       const res = await uploadFileToStorage('achievements', uid, file);
       setPhotoUrl(res.downloadUrl);
       setStoragePath(res.storagePath);
-      onNotify('success', 'Bukti foto prestasi diunggah.');
+      onNotify('success', 'Bukti foto prestasi berhasil dimuat.');
     } catch (err: unknown) {
       onNotify('error', err instanceof Error ? err.message : 'Gagal mengunggah bukti foto.');
     } finally {
@@ -307,13 +308,29 @@ export const AchievementsSection: React.FC<{
                 className="mt-1.5 w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-950"
               />
               {uploading && <p className="mt-1 text-xs text-blue-600">Mengunggah...</p>}
-              <input
-                type="url"
-                value={photoUrl}
-                onChange={(e) => setPhotoUrl(e.target.value)}
-                placeholder="Atau tempel URL gambar (opsional)"
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              />
+              {photoUrl.startsWith('data:') ? (
+                <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  <span className="font-medium">
+                    <i className="fa-solid fa-circle-check mr-1.5" aria-hidden="true" />
+                    Bukti foto terunggah & siap disimpan
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPhotoUrl('')}
+                    className="font-semibold underline shrink-0"
+                  >
+                    Hapus
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={photoUrl}
+                  onChange={(e) => setPhotoUrl(e.target.value)}
+                  placeholder="Atau tempel URL gambar (opsional)"
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+              )}
             </div>
 
             <div>
@@ -425,13 +442,14 @@ export const ActivitiesSection: React.FC<{
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     setUploading(true);
     try {
       const res = await uploadFileToStorage('activities', uid, file);
       setPhotoUrl(res.downloadUrl);
       setStoragePath(res.storagePath);
-      onNotify('success', 'Dokumentasi foto kegiatan diunggah.');
+      onNotify('success', 'Dokumentasi foto kegiatan berhasil dimuat.');
     } catch (err: unknown) {
       onNotify('error', err instanceof Error ? err.message : 'Gagal mengunggah foto.');
     } finally {
@@ -619,13 +637,29 @@ export const ActivitiesSection: React.FC<{
                 className="mt-1.5 w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-950"
               />
               {uploading && <p className="mt-1 text-xs text-blue-600">Mengunggah...</p>}
-              <input
-                type="url"
-                value={photoUrl}
-                onChange={(e) => setPhotoUrl(e.target.value)}
-                placeholder="Atau tempel URL foto dokumentasi"
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              />
+              {photoUrl.startsWith('data:') ? (
+                <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  <span className="font-medium">
+                    <i className="fa-solid fa-circle-check mr-1.5" aria-hidden="true" />
+                    Dokumentasi foto terunggah & siap disimpan
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPhotoUrl('')}
+                    className="font-semibold underline shrink-0"
+                  >
+                    Hapus
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={photoUrl}
+                  onChange={(e) => setPhotoUrl(e.target.value)}
+                  placeholder="Atau tempel URL foto dokumentasi"
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+              )}
             </div>
 
             <div>

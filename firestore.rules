@@ -63,7 +63,7 @@ service cloud.firestore {
         && data.role in ['admin', 'guru', 'siswa']
         && isOptionalString(data, 'nipNisn', 40)
         && isOptionalString(data, 'jabatanKelas', 100)
-        && isOptionalString(data, 'photoURL', 1000)
+        && isOptionalString(data, 'photoURL', 200000)
         && data.isActive is bool
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -93,7 +93,7 @@ service cloud.firestore {
         && isOptionalString(data, 'education', 150)
         && isOptionalString(data, 'expertise', 250)
         && isOptionalString(data, 'bio', 1500)
-        && isOptionalString(data, 'photoURL', 1000)
+        && isOptionalString(data, 'photoURL', 200000)
         && data.isPublished is bool
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -110,7 +110,7 @@ service cloud.firestore {
         && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 255
         && data.fileType in ['PDF', 'DOCX', 'PPT', 'XLSX', 'JPG', 'PNG']
         && data.fileSize is int && data.fileSize >= 0 && data.fileSize <= 20000000
-        && data.fileUrl is string && data.fileUrl.size() >= 1 && data.fileUrl.size() <= 1500
+        && data.fileUrl is string && data.fileUrl.size() >= 1 && data.fileUrl.size() <= 700000
         && isOptionalString(data, 'storagePath', 500)
         && data.isPublic is bool
         && data.createdAt is timestamp
@@ -126,7 +126,7 @@ service cloud.firestore {
         && data.year is int && data.year >= 1970 && data.year <= 2100
         && isOptionalString(data, 'description', 1200)
         && isOptionalString(data, 'fileName', 255)
-        && data.fileUrl is string && data.fileUrl.size() >= 1 && data.fileUrl.size() <= 1500
+        && data.fileUrl is string && data.fileUrl.size() >= 1 && data.fileUrl.size() <= 700000
         && isOptionalString(data, 'storagePath', 500)
         && data.isPublic is bool
         && data.createdAt is timestamp
@@ -141,7 +141,7 @@ service cloud.firestore {
         && data.level in ['Sekolah', 'Kabupaten/Kota', 'Provinsi', 'Nasional', 'Internasional']
         && data.year is int && data.year >= 1970 && data.year <= 2100
         && isOptionalString(data, 'description', 1500)
-        && isOptionalString(data, 'photoUrl', 1500)
+        && isOptionalString(data, 'photoUrl', 200000)
         && isOptionalString(data, 'storagePath', 500)
         && data.isPublic is bool
         && data.createdAt is timestamp
@@ -156,7 +156,7 @@ service cloud.firestore {
         && data.date is string && data.date.size() >= 4 && data.date.size() <= 30
         && data.year is int && data.year >= 1970 && data.year <= 2100
         && isOptionalString(data, 'description', 1500)
-        && isOptionalString(data, 'photoUrl', 1500)
+        && isOptionalString(data, 'photoUrl', 200000)
         && isOptionalString(data, 'storagePath', 500)
         && data.isPublic is bool
         && data.createdAt is timestamp
@@ -171,7 +171,7 @@ service cloud.firestore {
         && data.album is string && data.album.size() >= 1 && data.album.size() <= 80
         && data.year is int && data.year >= 1970 && data.year <= 2100
         && isOptionalString(data, 'caption', 600)
-        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 1500
+        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 200000
         && isOptionalString(data, 'storagePath', 500)
         && data.isPublic is bool
         && data.createdAt is timestamp;
@@ -213,7 +213,7 @@ service cloud.firestore {
         && isOptionalString(data, 'education', 150)
         && isOptionalString(data, 'expertise', 250)
         && isOptionalString(data, 'bio', 1500)
-        && isOptionalString(data, 'photoURL', 1000)
+        && isOptionalString(data, 'photoURL', 200000)
         && data.isPublished is bool
         && isOptionalBoundedList(data, 'featuredDocuments', 50)
         && isOptionalBoundedList(data, 'featuredCertificates', 50)

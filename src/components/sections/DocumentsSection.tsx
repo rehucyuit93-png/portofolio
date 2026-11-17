@@ -1,5 +1,10 @@
-import React, { useMemo, useState } from 'react';
-import { deleteStorageFile, uploadFileToStorage } from '../../lib/storageUpload';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  dataUrlToBlobUrl,
+  deleteStorageFile,
+  openOrDownloadFile,
+  uploadFileToStorage,
+} from '../../lib/storageUpload';
 import type { FileTypeTag, PortfolioDocument } from '../../types/portfolio';
 
 interface DocumentsSectionProps {
@@ -102,8 +107,25 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
     setShowModal(true);
   };
 
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string>('');
+
+  useEffect(() => {
+    if (!previewDoc) {
+      setPreviewBlobUrl('');
+      return;
+    }
+    if (previewDoc.fileUrl.startsWith('data:')) {
+      const blobUrl = dataUrlToBlobUrl(previewDoc.fileUrl);
+      setPreviewBlobUrl(blobUrl);
+      return () => URL.revokeObjectURL(blobUrl);
+    }
+    setPreviewBlobUrl(previewDoc.fileUrl);
+    return undefined;
+  }, [previewDoc]);
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     setUploading(true);
     setUploadPct(0);
@@ -117,7 +139,7 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
       if (!title.trim()) {
         setTitle(res.fileName.replace(/\.[^/.]+$/, ''));
       }
-      onNotify('success', 'Dokumen berhasil diunggah ke Firebase Storage.');
+      onNotify('success', 'Dokumen berhasil dimuat dan siap disimpan.');
     } catch (err: unknown) {
       onNotify('error', err instanceof Error ? err.message : 'Gagal mengunggah dokumen.');
     } finally {
@@ -284,16 +306,14 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
                         >
                           <i className="fa-solid fa-eye" aria-hidden="true" />
                         </button>
-                        <a
-                          href={item.fileUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          download={item.fileName}
+                        <button
+                          type="button"
+                          onClick={() => openOrDownloadFile(item.fileUrl, item.fileName, 'download')}
                           title="Unduh"
                           className="rounded-lg p-2 text-xs text-slate-600 hover:bg-slate-100 hover:text-emerald-600 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
                           <i className="fa-solid fa-download" aria-hidden="true" />
-                        </a>
+                        </button>
                         <button
                           type="button"
                           onClick={() => openEdit(item)}
@@ -359,14 +379,33 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 URL Berkas
               </label>
-              <input
-                type="url"
-                required
-                value={fileUrl}
-                onChange={(e) => setFileUrl(e.target.value)}
-                placeholder="Terisi otomatis saat upload atau tempel URL HTTPS"
-                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              />
+              {fileUrl.startsWith('data:') ? (
+                <div className="mt-1.5 flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  <span className="truncate font-medium">
+                    <i className="fa-solid fa-circle-check mr-1.5" aria-hidden="true" />
+                    Berkas terlampir: {fileName || 'Dokumen'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFileUrl('');
+                      setFileName('');
+                    }}
+                    className="font-semibold underline shrink-0"
+                  >
+                    Ganti URL
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  required
+                  value={fileUrl}
+                  onChange={(e) => setFileUrl(e.target.value)}
+                  placeholder="Terisi otomatis saat upload atau tempel URL HTTPS"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+              )}
             </div>
 
             <div>
@@ -506,7 +545,7 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
               ) : previewDoc.fileType === 'PDF' ? (
                 <iframe
                   title={previewDoc.title}
-                  src={previewDoc.fileUrl}
+                  src={previewBlobUrl || previewDoc.fileUrl}
                   className="h-[60vh] w-full rounded-xl border border-slate-200 dark:border-slate-800"
                 />
               ) : (
@@ -518,15 +557,14 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
                   <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                     Pratinjau langsung tersedia untuk PDF dan gambar. Klik tombol di bawah untuk mengunduh berkas {previewDoc.fileType}.
                   </p>
-                  <a
-                    href={previewDoc.fileUrl}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => openOrDownloadFile(previewDoc.fileUrl, previewDoc.fileName, 'download')}
                     className="mt-4 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700"
                   >
                     <i className="fa-solid fa-download" aria-hidden="true" />
                     <span>Buka / Unduh Berkas</span>
-                  </a>
+                  </button>
                 </div>
               )}
               {previewDoc.description && (

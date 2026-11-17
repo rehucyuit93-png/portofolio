@@ -57,13 +57,20 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     setUploadingPhoto(true);
     setUploadPct(0);
     try {
       const res = await uploadFileToStorage('profile-photo', uid, file, setUploadPct);
-      setForm((prev) => ({ ...prev, photoURL: res.downloadUrl }));
-      onNotify('success', 'Foto profil berhasil diunggah ke Firebase Storage.');
+      const nextForm = {
+        ...form,
+        photoURL: res.downloadUrl,
+        username: sanitizeUsername(form.username || form.fullName),
+      };
+      setForm(nextForm);
+      await onSaveProfile(nextForm);
+      onNotify('success', 'Foto profil berhasil diunggah dan disimpan.');
     } catch (err: unknown) {
       onNotify(
         'error',
@@ -89,6 +96,8 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({
       setSaving(false);
     }
   };
+
+  const isInlinePhoto = form.photoURL.startsWith('data:');
 
   return (
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
@@ -118,18 +127,35 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({
               <span>{uploadingPhoto ? `Mengunggah ${uploadPct}%...` : 'Unggah Foto Profil'}</span>
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/webp"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                disabled={uploadingPhoto}
                 onChange={handlePhotoUpload}
                 className="hidden"
               />
             </label>
-            <input
-              type="url"
-              value={form.photoURL}
-              onChange={(e) => setForm({ ...form, photoURL: e.target.value })}
-              placeholder="Atau tempel URL foto profil (HTTPS)"
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-            />
+            {isInlinePhoto ? (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                <span className="truncate font-medium">
+                  <i className="fa-solid fa-circle-check mr-1.5" aria-hidden="true" />
+                  Foto profil terunggah & aktif
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, photoURL: '' })}
+                  className="font-semibold underline hover:text-emerald-950 dark:hover:text-white shrink-0"
+                >
+                  Hapus / Ganti URL
+                </button>
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={form.photoURL}
+                onChange={(e) => setForm({ ...form, photoURL: e.target.value })}
+                placeholder="Atau tempel URL foto profil (HTTPS)"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            )}
           </div>
         </div>
 

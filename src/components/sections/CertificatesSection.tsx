@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { deleteStorageFile, uploadFileToStorage } from '../../lib/storageUpload';
+import { deleteStorageFile, openOrDownloadFile, uploadFileToStorage } from '../../lib/storageUpload';
 import type { Certificate } from '../../types/portfolio';
 
 interface CertificatesSectionProps {
@@ -80,6 +80,7 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     setUploading(true);
     try {
@@ -87,7 +88,7 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
       setFileUrl(res.downloadUrl);
       setFileName(res.fileName);
       setStoragePath(res.storagePath);
-      onNotify('success', 'Berkas sertifikat berhasil diunggah.');
+      onNotify('success', 'Berkas sertifikat berhasil dimuat.');
     } catch (err: unknown) {
       onNotify('error', err instanceof Error ? err.message : 'Gagal mengunggah sertifikat.');
     } finally {
@@ -199,15 +200,14 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
               </div>
 
               <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-3.5 text-xs dark:border-slate-800">
-                <a
-                  href={cert.fileUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
+                  onClick={() => openOrDownloadFile(cert.fileUrl, cert.fileName || cert.eventName, 'open')}
                   className="inline-flex items-center gap-1.5 font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400"
                 >
                   <i className="fa-solid fa-file-arrow-down" aria-hidden="true" />
                   <span>Lihat / Unduh</span>
-                </a>
+                </button>
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
@@ -305,14 +305,33 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
                 className="mt-1.5 w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-950"
               />
               {uploading && <p className="mt-1 text-xs text-blue-600">Mengunggah...</p>}
-              <input
-                type="url"
-                required
-                value={fileUrl}
-                onChange={(e) => setFileUrl(e.target.value)}
-                placeholder="Atau URL berkas sertifikat (HTTPS)"
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              />
+              {fileUrl.startsWith('data:') ? (
+                <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  <span className="truncate font-medium">
+                    <i className="fa-solid fa-circle-check mr-1.5" aria-hidden="true" />
+                    Berkas terlampir: {fileName || 'Sertifikat'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFileUrl('');
+                      setFileName('');
+                    }}
+                    className="font-semibold underline shrink-0"
+                  >
+                    Ganti URL
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  required
+                  value={fileUrl}
+                  onChange={(e) => setFileUrl(e.target.value)}
+                  placeholder="Atau URL berkas sertifikat (HTTPS)"
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+              )}
             </div>
 
             <div>
