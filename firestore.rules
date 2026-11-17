@@ -229,7 +229,7 @@ service cloud.firestore {
     // Collection rules
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(userId)
         && isValidUserAccount(incoming())
@@ -254,7 +254,7 @@ service cloud.firestore {
 
     match /admins/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isVerifiedUser() && request.auth.token.email == 'rehu.cyuit93@gmail.com';
+      allow list: if isAdmin();
       allow create: if isAdmin() && isValidId(userId) && isValidAdminMarker(incoming()) && incoming().uid == userId && incoming().createdAt == request.time;
       allow update: if false;
       allow delete: if isAdmin() && isValidId(userId);
@@ -262,7 +262,7 @@ service cloud.firestore {
 
     match /profiles/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(userId)
         && isValidUserProfile(incoming())
@@ -283,8 +283,8 @@ service cloud.firestore {
     }
 
     match /documents/{docId} {
-      allow get: if isValidId(docId) && isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow get: if isValidId(docId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(docId)
         && isValidPortfolioDocument(incoming())
@@ -305,8 +305,8 @@ service cloud.firestore {
     }
 
     match /certificates/{certId} {
-      allow get: if isValidId(certId) && isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow get: if isValidId(certId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(certId)
         && isValidCertificate(incoming())
@@ -327,8 +327,8 @@ service cloud.firestore {
     }
 
     match /achievements/{achId} {
-      allow get: if isValidId(achId) && isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow get: if isValidId(achId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(achId)
         && isValidAchievement(incoming())
@@ -349,8 +349,8 @@ service cloud.firestore {
     }
 
     match /activities/{actId} {
-      allow get: if isValidId(actId) && isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow get: if isValidId(actId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(actId)
         && isValidActivity(incoming())
@@ -371,8 +371,8 @@ service cloud.firestore {
     }
 
     match /galleries/{galId} {
-      allow get: if isValidId(galId) && isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow get: if isValidId(galId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(galId)
         && isValidGalleryItem(incoming())
@@ -391,8 +391,8 @@ service cloud.firestore {
     }
 
     match /logs/{logId} {
-      allow get: if isValidId(logId) && isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow get: if isValidId(logId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(logId)
         && isValidAuditLog(incoming())
@@ -404,7 +404,7 @@ service cloud.firestore {
 
     match /settings/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || request.auth.token.email == 'rehu.cyuit93@gmail.com');
+      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(userId)
         && isValidUserSettings(incoming())
@@ -425,10 +425,11 @@ service cloud.firestore {
 
     match /publicPortfolios/{username} {
       allow get: if isValidUsername(username) && (
+        resource == null ||
         resource.data.isPublished == true ||
         (isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin()))
       );
-      allow list: if isVerifiedUser() && request.auth.token.email == 'rehu.cyuit93@gmail.com';
+      allow list: if isAdmin();
       allow create: if isVerifiedUser()
         && isValidUsername(username)
         && isValidPublicPortfolio(incoming())

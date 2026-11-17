@@ -7,7 +7,6 @@ import {
   getDocs,
   limit,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -32,6 +31,25 @@ import type {
   UserSettings,
 } from '../types/portfolio';
 
+const OFFLINE_CACHE_PREFIX = 'karyaloka_cache_v1';
+
+export function saveOfflineCache<T>(uid: string, key: string, data: T): void {
+  try {
+    localStorage.setItem(`${OFFLINE_CACHE_PREFIX}_${uid}_${key}`, JSON.stringify(data));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function loadOfflineCache<T>(uid: string, key: string): T | null {
+  try {
+    const raw = localStorage.getItem(`${OFFLINE_CACHE_PREFIX}_${uid}_${key}`);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function sanitizeUsername(raw: string): string {
   const cleaned = raw
     .toLowerCase()
@@ -49,6 +67,17 @@ export function generateDefaultUsername(displayName: string, uid: string): strin
 
 export function clampStr(value: string | undefined, max: number): string {
   return (value ?? '').trim().slice(0, max);
+}
+
+function normalizeIntegers<T extends Record<string, unknown>>(obj: T): T {
+  const copy: Record<string, unknown> = { ...obj };
+  if (typeof copy.year === 'number') {
+    copy.year = Math.trunc(Number.isFinite(copy.year) ? copy.year : new Date().getFullYear());
+  }
+  if (typeof copy.fileSize === 'number') {
+    copy.fileSize = Math.max(0, Math.trunc(Number.isFinite(copy.fileSize) ? copy.fileSize : 0));
+  }
+  return copy as T;
 }
 
 export function computeProfileCompleteness(profile: UserProfile | null): number {
@@ -95,7 +124,31 @@ export async function writeAuditLog(params: {
   }
 }
 
+const initInFlight = new Map<
+  string,
+  Promise<{ account: UserAccount; profile: UserProfile; settings: UserSettings }>
+>();
+
 export async function ensureUserInitialized(params: {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  preferredRole?: 'guru' | 'siswa';
+  nipNisn?: string;
+  jabatanKelas?: string;
+}): Promise<{ account: UserAccount; profile: UserProfile; settings: UserSettings }> {
+  const existingPromise = initInFlight.get(params.uid);
+  if (existingPromise) return existingPromise;
+
+  const task = runEnsureUserInitialized(params).finally(() => {
+    initInFlight.delete(params.uid);
+  });
+  initInFlight.set(params.uid, task);
+  return task;
+}
+
+async function runEnsureUserInitialized(params: {
   uid: string;
   email: string;
   displayName: string;
@@ -108,6 +161,10 @@ export async function ensureUserInitialized(params: {
   const profileRef = doc(db, 'profiles', params.uid);
   const settingsRef = doc(db, 'settings', params.uid);
 
+  const safeEmail = clampStr(params.email, 200) || `${params.uid}@karyaloka.local`;
+  const safeDisplayName =
+    clampStr(params.displayName || safeEmail.split('@')[0], 120) || 'Pengguna';
+
   let accountSnap;
   try {
     accountSnap = await getDoc(userRef);
@@ -115,8 +172,8 @@ export async function ensureUserInitialized(params: {
     handleFirestoreError(error, OperationType.GET, `users/${params.uid}`);
   }
 
-  const isBootstrapAdmin = params.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
-  const defaultUsername = generateDefaultUsername(params.displayName || params.email.split('@')[0], params.uid);
+  const isBootstrapAdmin = safeEmail.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+  const defaultUsername = generateDefaultUsername(safeDisplayName, params.uid);
 
   let account: UserAccount;
   if (!accountSnap.exists()) {
@@ -124,12 +181,17 @@ export async function ensureUserInitialized(params: {
     const newAccount: UserAccount = {
       uid: params.uid,
       username: defaultUsername,
-      email: clampStr(params.email, 200),
-      displayName: clampStr(params.displayName || params.email.split('@')[0], 120),
+      email: safeEmail,
+      displayName: safeDisplayName,
       role: assignedRole,
       nipNisn: clampStr(params.nipNisn, 40),
       jabatanKelas: clampStr(
-        params.jabatanKelas || (assignedRole === 'siswa' ? 'Siswa' : assignedRole === 'admin' ? 'Administrator Sistem' : 'Guru'),
+        params.jabatanKelas ||
+          (assignedRole === 'siswa'
+            ? 'Siswa'
+            : assignedRole === 'admin'
+              ? 'Administrator Sistem'
+              : 'Guru'),
         100
       ),
       photoURL: clampStr(params.photoURL, 1000),
@@ -160,15 +222,15 @@ export async function ensureUserInitialized(params: {
   if (!profileSnap.exists()) {
     const newProfile: UserProfile = {
       uid: params.uid,
-      username: account.username,
-      fullName: account.displayName,
+      username: sanitizeUsername(account.username || defaultUsername),
+      fullName: clampStr(account.displayName, 120) || safeDisplayName,
       nipNisn: account.nipNisn || '',
       jabatanKelas: account.jabatanKelas || '',
       birthPlace: '',
       birthDate: '',
       address: '',
       phone: '',
-      email: account.email,
+      email: clampStr(account.email, 200) || safeEmail,
       education: '',
       expertise: '',
       bio: '',
@@ -220,22 +282,23 @@ export async function ensureUserInitialized(params: {
   }
 
   // Ensure initial public portfolio document exists so public URL works right away
+  const safeUsername = sanitizeUsername(profile.username || defaultUsername);
   try {
-    const pubRef = doc(db, 'publicPortfolios', profile.username);
+    const pubRef = doc(db, 'publicPortfolios', safeUsername);
     const pubSnap = await getDoc(pubRef);
     if (!pubSnap.exists()) {
       await setDoc(pubRef, {
         uid: params.uid,
-        username: profile.username,
-        fullName: profile.fullName,
-        role: account.role,
-        nipNisn: profile.nipNisn || '',
-        jabatanKelas: profile.jabatanKelas || '',
-        education: profile.education || '',
-        expertise: profile.expertise || '',
-        bio: profile.bio || '',
-        photoURL: profile.photoURL || '',
-        isPublished: profile.isPublished,
+        username: safeUsername,
+        fullName: clampStr(profile.fullName, 120) || safeDisplayName,
+        role: account.role || 'guru',
+        nipNisn: clampStr(profile.nipNisn, 40),
+        jabatanKelas: clampStr(profile.jabatanKelas, 100),
+        education: clampStr(profile.education, 150),
+        expertise: clampStr(profile.expertise, 250),
+        bio: clampStr(profile.bio, 1500),
+        photoURL: clampStr(profile.photoURL, 1000),
+        isPublished: Boolean(profile.isPublished),
         featuredDocuments: [],
         featuredCertificates: [],
         featuredAchievements: [],
@@ -244,9 +307,10 @@ export async function ensureUserInitialized(params: {
       });
     }
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `publicPortfolios/${profile.username}`);
+    handleFirestoreError(error, OperationType.WRITE, `publicPortfolios/${safeUsername}`);
   }
 
+  saveOfflineCache(params.uid, 'session', { account, profile, settings });
   return { account, profile, settings };
 }
 
@@ -261,6 +325,14 @@ export async function saveProfile(
   gals: GalleryItem[]
 ): Promise<UserProfile> {
   const cleanUsername = sanitizeUsername(data.username);
+
+  if (previousUsername && previousUsername !== cleanUsername) {
+    const targetSnap = await getDoc(doc(db, 'publicPortfolios', cleanUsername));
+    if (targetSnap.exists() && targetSnap.data()?.uid !== uid) {
+      throw new Error('Username URL publik tersebut sudah digunakan pengguna lain. Pilih username lain.');
+    }
+  }
+
   const payload = {
     username: cleanUsername,
     fullName: clampStr(data.fullName, 120) || 'Pengguna',
@@ -270,7 +342,7 @@ export async function saveProfile(
     birthDate: clampStr(data.birthDate, 20),
     address: clampStr(data.address, 300),
     phone: clampStr(data.phone, 30),
-    email: clampStr(data.email, 200),
+    email: clampStr(data.email, 200) || `${uid}@karyaloka.local`,
     education: clampStr(data.education, 150),
     expertise: clampStr(data.expertise, 250),
     bio: clampStr(data.bio, 1500),
@@ -327,8 +399,8 @@ export async function syncPublicPortfolio(
   const payload = {
     uid: profile.uid,
     username,
-    fullName: clampStr(profile.fullName, 120),
-    role,
+    fullName: clampStr(profile.fullName, 120) || 'Pengguna',
+    role: role || 'guru',
     nipNisn: clampStr(profile.nipNisn, 40),
     jabatanKelas: clampStr(profile.jabatanKelas, 100),
     education: clampStr(profile.education, 150),
@@ -411,7 +483,8 @@ export async function fetchPublicPortfolio(username: string): Promise<PublicPort
 export function subscribeUserCollection<T extends { id: string }>(
   collectionName: string,
   uid: string,
-  onData: (items: T[]) => void
+  onData: (items: T[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(collection(db, collectionName), where('uid', '==', uid));
   return onSnapshot(
@@ -421,32 +494,51 @@ export function subscribeUserCollection<T extends { id: string }>(
         id: d.id,
         ...(d.data() as Omit<T, 'id'>),
       })) as T[];
+      saveOfflineCache(uid, collectionName, items);
       onData(items);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, collectionName);
+      try {
+        handleFirestoreError(error, OperationType.LIST, collectionName);
+      } catch (wrapped) {
+        if (onError) {
+          onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
     }
   );
 }
 
-export function subscribeUserLogs(uid: string, onData: (logs: AuditLog[]) => void): Unsubscribe {
-  const q = query(
-    collection(db, 'logs'),
-    where('uid', '==', uid),
-    orderBy('createdAt', 'desc'),
-    limit(100)
-  );
+export function subscribeUserLogs(
+  uid: string,
+  onData: (logs: AuditLog[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const q = query(collection(db, 'logs'), where('uid', '==', uid), limit(100));
   return onSnapshot(
     q,
     (snap) => {
-      const logs = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<AuditLog, 'id'>),
-      }));
+      const logs = snap.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<AuditLog, 'id'>),
+        }))
+        .sort((a, b) => {
+          const ta = (a.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0;
+          const tb = (b.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0;
+          return tb - ta;
+        });
+      saveOfflineCache(uid, 'logs', logs);
       onData(logs);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'logs');
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'logs');
+      } catch (wrapped) {
+        if (onError) {
+          onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
     }
   );
 }
@@ -457,9 +549,10 @@ export async function createCollectionItem<T extends Record<string, unknown>>(
   hasUpdatedAt = true
 ): Promise<string> {
   try {
+    const clean = normalizeIntegers(data);
     const payload = hasUpdatedAt
-      ? { ...data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
-      : { ...data, createdAt: serverTimestamp() };
+      ? { ...clean, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+      : { ...clean, createdAt: serverTimestamp() };
     const docRef = await addDoc(collection(db, collectionName), payload);
     return docRef.id;
   } catch (error) {
@@ -475,7 +568,8 @@ export async function updateCollectionItem<T extends Record<string, unknown>>(
 ): Promise<void> {
   const path = `${collectionName}/${id}`;
   try {
-    const payload = hasUpdatedAt ? { ...data, updatedAt: serverTimestamp() } : data;
+    const clean = normalizeIntegers(data);
+    const payload = hasUpdatedAt ? { ...clean, updatedAt: serverTimestamp() } : clean;
     await updateDoc(doc(db, collectionName, id), payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
@@ -519,17 +613,25 @@ export async function fetchAllAdminCollections(): Promise<{
     getDocs(collection(db, 'documents')).catch((e) => handleFirestoreError(e, OperationType.LIST, 'documents')),
     getDocs(collection(db, 'certificates')).catch((e) => handleFirestoreError(e, OperationType.LIST, 'certificates')),
     getDocs(collection(db, 'achievements')).catch((e) => handleFirestoreError(e, OperationType.LIST, 'achievements')),
-    getDocs(query(collection(db, 'logs'), orderBy('createdAt', 'desc'), limit(200))).catch((e) =>
+    getDocs(query(collection(db, 'logs'), limit(200))).catch((e) =>
       handleFirestoreError(e, OperationType.LIST, 'logs')
     ),
   ]);
+
+  const sortedLogs = logsSnap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as Omit<AuditLog, 'id'>) }))
+    .sort((a, b) => {
+      const ta = (a.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0;
+      const tb = (b.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0;
+      return tb - ta;
+    });
 
   return {
     users: usersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<UserAccount, 'id'>) })),
     documents: docsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PortfolioDocument, 'id'>) })),
     certificates: certsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Certificate, 'id'>) })),
     achievements: achsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Achievement, 'id'>) })),
-    logs: logsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AuditLog, 'id'>) })),
+    logs: sortedLogs,
   };
 }
 
@@ -549,7 +651,7 @@ export async function adminCreateUserRecord(params: {
       uid: newId,
       username,
       email: clampStr(params.email, 200),
-      displayName: clampStr(params.displayName, 120),
+      displayName: clampStr(params.displayName, 120) || 'Pengguna',
       role: params.role,
       nipNisn: clampStr(params.nipNisn, 40),
       jabatanKelas: clampStr(params.jabatanKelas, 100),

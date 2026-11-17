@@ -12,7 +12,6 @@ import {
   type User,
 } from 'firebase/auth';
 import { auth, firebaseConfig, googleProvider } from '../lib/firebase';
-import { ensureUserInitialized, writeAuditLog } from '../lib/portfolioService';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface AuthViewProps {
@@ -51,21 +50,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
     setLoading(true);
     try {
       await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
-      const result = await signInWithPopup(auth, googleProvider);
-      await ensureUserInitialized({
-        uid: result.user.uid,
-        email: result.user.email || '',
-        displayName: result.user.displayName || 'Pengguna Google',
-        photoURL: result.user.photoURL || '',
-      });
-      await writeAuditLog({
-        uid: result.user.uid,
-        userEmail: result.user.email || '',
-        userName: result.user.displayName || '',
-        action: 'LOGIN',
-        module: 'Autentikasi',
-        detail: 'Masuk menggunakan akun Google',
-      });
+      await signInWithPopup(auth, googleProvider);
       onNotify('success', 'Berhasil masuk dengan akun Google.');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Gagal masuk dengan Google.';
@@ -87,19 +72,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
       if (mode === 'login') {
         const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
         if (cred.user.emailVerified) {
-          await ensureUserInitialized({
-            uid: cred.user.uid,
-            email: cred.user.email || email.trim(),
-            displayName: cred.user.displayName || email.split('@')[0],
-          });
-          await writeAuditLog({
-            uid: cred.user.uid,
-            userEmail: cred.user.email || '',
-            userName: cred.user.displayName || '',
-            action: 'LOGIN',
-            module: 'Autentikasi',
-            detail: 'Masuk menggunakan Email & Password',
-          });
           onNotify('success', 'Selamat datang kembali di KaryaLoka.');
         } else {
           onNotify('info', 'Silakan verifikasi email Anda terlebih dahulu.');
@@ -110,7 +82,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
         }
         const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
         await updateProfile(cred.user, { displayName: fullName.trim() });
-        await sendEmailVerification(cred.user);
         localStorage.setItem(
           `pending_reg_${cred.user.uid}`,
           JSON.stringify({
@@ -120,6 +91,11 @@ export const AuthView: React.FC<AuthViewProps> = ({
             jabatanKelas: jabatanKelas.trim(),
           })
         );
+        try {
+          await sendEmailVerification(cred.user);
+        } catch {
+          // User can resend from verification view
+        }
         onNotify(
           'success',
           'Akun dibuat! Tautan verifikasi telah dikirim ke email Anda. Verifikasi email untuk mengaktifkan akses portofolio.'

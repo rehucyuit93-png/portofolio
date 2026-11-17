@@ -13,6 +13,7 @@ import {
   YAxis,
 } from 'recharts';
 import { auth } from '../../lib/firebase';
+import { formatFirestoreErrorForUser } from '../../lib/firestoreError';
 import {
   adminCreateUserRecord,
   adminDeleteUserRecord,
@@ -68,7 +69,7 @@ export const AdminDashboardSection: React.FC<AdminDashboardSectionProps> = ({
       setAchievements(res.achievements);
       setLogs(res.logs);
     } catch (err: unknown) {
-      onNotify('error', err instanceof Error ? err.message : 'Gagal memuat data admin.');
+      onNotify('error', formatFirestoreErrorForUser(err));
     } finally {
       setLoading(false);
     }
@@ -161,7 +162,7 @@ export const AdminDashboardSection: React.FC<AdminDashboardSectionProps> = ({
       onNotify('success', 'Pengguna baru berhasil ditambahkan.');
       await loadData();
     } catch (err: unknown) {
-      onNotify('error', err instanceof Error ? err.message : 'Gagal menambah pengguna.');
+      onNotify('error', formatFirestoreErrorForUser(err));
     } finally {
       setSubmitting(false);
     }
@@ -192,7 +193,7 @@ export const AdminDashboardSection: React.FC<AdminDashboardSectionProps> = ({
       onNotify('success', 'Pengguna berhasil dihapus.');
       await loadData();
     } catch (err: unknown) {
-      onNotify('error', err instanceof Error ? err.message : 'Gagal menghapus pengguna.');
+      onNotify('error', formatFirestoreErrorForUser(err));
     }
   };
 

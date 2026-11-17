@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
-import { auth, testFirestoreConnection } from './lib/firebase';
+import {
+  auth,
+  getQuotaUpgradeUrl,
+  testFirestoreConnection,
+  type FirestoreConnectionStatus,
+} from './lib/firebase';
+import { formatFirestoreErrorForUser } from './lib/firestoreError';
 import {
   createCollectionItem,
   deleteCollectionItem,
   ensureUserInitialized,
+  loadOfflineCache,
   saveProfile,
   subscribeUserCollection,
   subscribeUserLogs,
@@ -49,6 +56,10 @@ export default function App() {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [unverifiedUser, setUnverifiedUser] = useState<User | null>(null);
 
+  const [dbStatus, setDbStatus] = useState<FirestoreConnectionStatus | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [retryingSession, setRetryingSession] = useState(false);
+
   const [account, setAccount] = useState<UserAccount | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -59,6 +70,8 @@ export default function App() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [galleries, setGalleries] = useState<GalleryItem[]>([]);
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const loggedUidRef = useRef<string | null>(null);
+  const listenerNotifiedRef = useRef<boolean>(false);
 
   const [activeSection, setActiveSection] = useState<DashboardSection>('dashboard');
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -68,7 +81,7 @@ export default function App() {
     setToasts((prev) => [...prev, { id, type, message }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4500);
+    }, 5000);
   }, []);
 
   // Sync Tailwind dark class on <html>
@@ -90,29 +103,36 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePop);
   }, []);
 
-  // Boot Firestore server check
-  useEffect(() => {
-    testFirestoreConnection();
+  const checkDbConnection = useCallback(async () => {
+    const status = await testFirestoreConnection();
+    setDbStatus(status);
+    return status;
   }, []);
 
-  const hydrateUserSession = useCallback(
-    async (user: User) => {
-      const pendingRaw = localStorage.getItem(`pending_reg_${user.uid}`);
-      let pending: {
-        fullName?: string;
-        role?: 'guru' | 'siswa';
-        nipNisn?: string;
-        jabatanKelas?: string;
-      } = {};
-      if (pendingRaw) {
-        try {
-          pending = JSON.parse(pendingRaw);
-        } catch {
-          pending = {};
-        }
-        localStorage.removeItem(`pending_reg_${user.uid}`);
-      }
+  // Boot Firestore server check
+  useEffect(() => {
+    checkDbConnection();
+  }, [checkDbConnection]);
 
+  const hydrateUserSession = useCallback(async (user: User) => {
+    setSessionError(null);
+    const pendingRaw = localStorage.getItem(`pending_reg_${user.uid}`);
+    let pending: {
+      fullName?: string;
+      role?: 'guru' | 'siswa';
+      nipNisn?: string;
+      jabatanKelas?: string;
+    } = {};
+    if (pendingRaw) {
+      try {
+        pending = JSON.parse(pendingRaw);
+      } catch {
+        pending = {};
+      }
+      localStorage.removeItem(`pending_reg_${user.uid}`);
+    }
+
+    try {
       const init = await ensureUserInitialized({
         uid: user.uid,
         email: user.email || '',
@@ -127,16 +147,63 @@ export default function App() {
       setProfile(init.profile);
       setSettings(init.settings);
       setTheme(init.settings.theme);
-    },
-    []
-  );
+
+      if (loggedUidRef.current !== user.uid) {
+        loggedUidRef.current = user.uid;
+        writeAuditLog({
+          uid: user.uid,
+          userEmail: init.account.email,
+          userName: init.account.displayName,
+          action: 'LOGIN',
+          module: 'Autentikasi',
+          detail: 'Masuk ke dashboard KaryaLoka',
+        }).catch(() => undefined);
+      }
+    } catch (err: unknown) {
+      const friendly = formatFirestoreErrorForUser(err);
+      const isOffline =
+        !navigator.onLine ||
+        friendly.toLowerCase().includes('offline') ||
+        friendly.toLowerCase().includes('tidak stabil');
+
+      // Fallback to localStorage offline cache when offline
+      if (isOffline) {
+        const cachedSession = loadOfflineCache<{
+          account: UserAccount;
+          profile: UserProfile;
+          settings: UserSettings;
+        }>(user.uid, 'session');
+
+        if (cachedSession?.account && cachedSession?.profile && cachedSession?.settings) {
+          setAccount(cachedSession.account);
+          setProfile(cachedSession.profile);
+          setSettings(cachedSession.settings);
+          setTheme(cachedSession.settings.theme);
+          setDocuments(loadOfflineCache<PortfolioDocument[]>(user.uid, 'documents') || []);
+          setCertificates(loadOfflineCache<Certificate[]>(user.uid, 'certificates') || []);
+          setAchievements(loadOfflineCache<Achievement[]>(user.uid, 'achievements') || []);
+          setActivities(loadOfflineCache<Activity[]>(user.uid, 'activities') || []);
+          setGalleries(loadOfflineCache<GalleryItem[]>(user.uid, 'galleries') || []);
+          setLogs(loadOfflineCache<AuditLog[]>(user.uid, 'logs') || []);
+          notify('info', 'Menampilkan salinan cache offline karena koneksi Firestore sedang terputus.');
+          return;
+        }
+      }
+
+      setSessionError(friendly);
+      throw new Error(friendly);
+    }
+  }, [notify]);
 
   // Firebase Auth listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
+        loggedUidRef.current = null;
+        listenerNotifiedRef.current = false;
         setFirebaseUser(null);
         setUnverifiedUser(null);
+        setSessionError(null);
         setAccount(null);
         setProfile(null);
         setSettings(null);
@@ -162,7 +229,7 @@ export default function App() {
       try {
         await hydrateUserSession(user);
       } catch (err: unknown) {
-        notify('error', err instanceof Error ? err.message : 'Gagal memuat profil pengguna.');
+        notify('error', err instanceof Error ? err.message : 'Gagal memuat profil pengguna dari database.');
       } finally {
         setAuthReady(true);
       }
@@ -171,17 +238,24 @@ export default function App() {
     return () => unsub();
   }, [hydrateUserSession, notify]);
 
-  // Attach Firestore real-time listeners once authenticated & verified
+  // Attach Firestore real-time listeners once authenticated & verified & hydrated
   useEffect(() => {
-    if (!authReady || !firebaseUser) return;
+    if (!authReady || !firebaseUser || !account) return;
     const uid = firebaseUser.uid;
+    listenerNotifiedRef.current = false;
 
-    const unsubDocs = subscribeUserCollection<PortfolioDocument>('documents', uid, setDocuments);
-    const unsubCerts = subscribeUserCollection<Certificate>('certificates', uid, setCertificates);
-    const unsubAchs = subscribeUserCollection<Achievement>('achievements', uid, setAchievements);
-    const unsubActs = subscribeUserCollection<Activity>('activities', uid, setActivities);
-    const unsubGals = subscribeUserCollection<GalleryItem>('galleries', uid, setGalleries);
-    const unsubLogs = subscribeUserLogs(uid, setLogs);
+    const handleListenerError = (err: Error) => {
+      if (listenerNotifiedRef.current) return;
+      listenerNotifiedRef.current = true;
+      notify('error', formatFirestoreErrorForUser(err));
+    };
+
+    const unsubDocs = subscribeUserCollection<PortfolioDocument>('documents', uid, setDocuments, handleListenerError);
+    const unsubCerts = subscribeUserCollection<Certificate>('certificates', uid, setCertificates, handleListenerError);
+    const unsubAchs = subscribeUserCollection<Achievement>('achievements', uid, setAchievements, handleListenerError);
+    const unsubActs = subscribeUserCollection<Activity>('activities', uid, setActivities, handleListenerError);
+    const unsubGals = subscribeUserCollection<GalleryItem>('galleries', uid, setGalleries, handleListenerError);
+    const unsubLogs = subscribeUserLogs(uid, setLogs, handleListenerError);
 
     return () => {
       unsubDocs();
@@ -191,7 +265,7 @@ export default function App() {
       unsubGals();
       unsubLogs();
     };
-  }, [authReady, firebaseUser]);
+  }, [authReady, firebaseUser, account, notify]);
 
   const navigatePublicPortfolio = (username: string) => {
     const path = `/portfolio/${encodeURIComponent(username)}`;
@@ -245,9 +319,114 @@ export default function App() {
     );
   }
 
+  // Signed-in user encountered a Firestore initialization/database error: show clear recovery UI instead of bouncing back to Login
+  if (firebaseUser && (!account || !profile || !settings)) {
+    return (
+      <>
+        <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
+          <div className="w-full max-w-lg rounded-2xl border border-rose-200 bg-white p-6 shadow-lg dark:border-rose-900/60 dark:bg-slate-900">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400">
+                <i className="fa-solid fa-database text-lg" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Koneksi Database Terkendala
+                </h1>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Masuk sebagai <span className="font-semibold">{firebaseUser.email}</span>
+                </p>
+                <p className="mt-3 rounded-xl bg-rose-50 p-3 text-xs leading-relaxed text-rose-800 dark:bg-rose-950/50 dark:text-rose-200">
+                  {sessionError ||
+                    dbStatus?.message ||
+                    'Tidak dapat memuat data profil Anda dari database Firestore.'}
+                </p>
+                {(sessionError?.toLowerCase().includes('kuota') || dbStatus?.reason === 'quota') && (
+                  <a
+                    href={getQuotaUpgradeUrl()}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 underline dark:text-blue-400"
+                  >
+                    <span>Periksa Kuota Firestore di Firebase Console</span>
+                    <i className="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true" />
+                  </a>
+                )}
+                <div className="mt-5 flex flex-wrap gap-2.5">
+                  <button
+                    type="button"
+                    disabled={retryingSession}
+                    onClick={async () => {
+                      setRetryingSession(true);
+                      try {
+                        await checkDbConnection();
+                        await firebaseUser.getIdToken(true);
+                        await hydrateUserSession(firebaseUser);
+                        notify('success', 'Berhasil terhubung ke database Firestore.');
+                      } catch (err: unknown) {
+                        notify('error', err instanceof Error ? err.message : 'Masih gagal terhubung ke database.');
+                      } finally {
+                        setRetryingSession(false);
+                      }
+                    }}
+                    className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    {retryingSession ? 'Menghubungkan...' : 'Coba Hubungkan Ulang'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await signOut(auth);
+                      setSessionError(null);
+                    }}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    Keluar Akun
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <OfflineIndicator />
+        <ToastContainer
+          toasts={toasts}
+          onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
+        />
+      </>
+    );
+  }
+
   if (!firebaseUser || !account || !profile || !settings) {
     return (
       <>
+        {dbStatus && !dbStatus.ok && (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/60 dark:text-amber-200">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
+                <span>{dbStatus.message}</span>
+                {dbStatus.upgradeUrl && (
+                  <a
+                    href={dbStatus.upgradeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold underline"
+                  >
+                    Buka Firebase Console
+                  </a>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={checkDbConnection}
+                className="rounded-lg border border-amber-300 px-2.5 py-1 font-semibold hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900/50"
+              >
+                Uji Koneksi
+              </button>
+            </div>
+          </div>
+        )}
         <AuthView
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
@@ -256,10 +435,15 @@ export default function App() {
             if (!auth.currentUser) return;
             await auth.currentUser.reload();
             if (auth.currentUser.emailVerified) {
+              await auth.currentUser.getIdToken(true);
               setUnverifiedUser(null);
               setFirebaseUser(auth.currentUser);
-              await hydrateUserSession(auth.currentUser);
-              notify('success', 'Email berhasil diverifikasi!');
+              try {
+                await hydrateUserSession(auth.currentUser);
+                notify('success', 'Email berhasil diverifikasi!');
+              } catch (err: unknown) {
+                notify('error', err instanceof Error ? err.message : 'Gagal memuat profil dari database.');
+              }
             } else {
               notify('info', 'Email belum terverifikasi. Periksa kotak masuk atau folder spam Anda.');
             }
