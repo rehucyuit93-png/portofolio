@@ -16,6 +16,7 @@ const app = initializeApp(firebaseConfig);
 
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+auth.languageCode = 'id';
 export const storage = getStorage(app);
 storage.maxUploadRetryTime = 5000;
 storage.maxOperationRetryTime = 5000;
@@ -42,33 +43,41 @@ export function getAuthProvidersUrl(): string {
 }
 
 function isContinueUriOrDomainError(err: unknown): boolean {
-  const code = (err as { code?: string })?.code || '';
-  const raw = err instanceof Error ? err.message : String(err);
+  const code = ((err as { code?: string })?.code || '').toLowerCase();
+  const raw = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return (
     code === 'auth/unauthorized-continue-uri' ||
     code === 'auth/unauthorized-domain' ||
     code === 'auth/invalid-continue-uri' ||
     code === 'auth/missing-continue-uri' ||
-    raw.includes('auth/unauthorized-continue-uri') ||
-    raw.includes('auth/unauthorized-domain') ||
-    raw.includes('auth/invalid-continue-uri')
+    raw.includes('unauthorized-continue-uri') ||
+    raw.includes('unauthorized-domain') ||
+    raw.includes('invalid-continue-uri') ||
+    raw.includes('domain not allowlisted') ||
+    raw.includes('unauthorized_domain')
   );
 }
 
 export async function sendVerificationEmailSafe(
   user: User
-): Promise<{ usedFallbackDomain: boolean }> {
+): Promise<{ usedFallbackDomain: boolean; alreadyVerified: boolean }> {
+  await user.reload().catch(() => undefined);
+  if (user.emailVerified) {
+    await user.getIdToken(true).catch(() => undefined);
+    return { usedFallbackDomain: false, alreadyVerified: true };
+  }
+
   try {
     await sendEmailVerification(user, {
       url: `${window.location.origin}/?verified=1`,
       handleCodeInApp: false,
     });
-    return { usedFallbackDomain: false };
+    return { usedFallbackDomain: false, alreadyVerified: false };
   } catch (err: unknown) {
     if (isContinueUriOrDomainError(err)) {
       // Fallback to Firebase's default authDomain handler when current domain isn't allowlisted yet
       await sendEmailVerification(user);
-      return { usedFallbackDomain: true };
+      return { usedFallbackDomain: true, alreadyVerified: false };
     }
     throw err;
   }
@@ -122,6 +131,16 @@ export function formatAuthErrorMessage(err: unknown): {
     return {
       message:
         'Terlalu banyak permintaan pengiriman email dalam waktu singkat. Tunggu 1-2 menit sebelum mencoba lagi.',
+    };
+  }
+  if (code === 'auth/user-token-expired') {
+    return {
+      message: 'Sesi login telah kedaluwarsa. Silakan keluar lalu masuk kembali.',
+    };
+  }
+  if (code === 'auth/network-request-failed') {
+    return {
+      message: 'Koneksi internet terputus saat menghubungi server autentikasi. Silakan coba lagi.',
     };
   }
   if (code === 'auth/popup-closed-by-user') {

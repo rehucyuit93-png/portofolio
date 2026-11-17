@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import type {
   Achievement,
@@ -57,8 +57,14 @@ interface DashboardShellProps {
   onLogout: () => Promise<void>;
   onNotify: (type: 'success' | 'error' | 'info', message: string) => void;
   emailVerified?: boolean;
-  onSendVerificationEmail?: () => Promise<void>;
-  onRefreshVerification?: () => Promise<void>;
+  onSendVerificationEmail?: () => Promise<{
+    sent: boolean;
+    alreadyVerified?: boolean;
+    usedFallbackDomain?: boolean;
+    error?: string;
+  }>;
+  onRefreshVerification?: () => Promise<{ verified: boolean; error?: string }>;
+  onApplyVerificationLink?: (linkOrCode: string) => Promise<{ verified: boolean; error?: string }>;
 }
 
 const MENU_ITEMS: Array<{ id: DashboardSection; label: string; icon: string }> = [
@@ -78,6 +84,35 @@ export const DashboardShell: React.FC<DashboardShellProps> = (props) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dismissedVerifyBanner, setDismissedVerifyBanner] = useState(false);
   const [sendingVerify, setSendingVerify] = useState(false);
+  const [checkingVerify, setCheckingVerify] = useState(false);
+  const [verifyCooldown, setVerifyCooldown] = useState<number>(() => {
+    const raw = localStorage.getItem(`verify_sent_${props.account.uid}`);
+    if (!raw) return 0;
+    const elapsed = Math.floor((Date.now() - Number(raw)) / 1000);
+    return elapsed >= 0 && elapsed < 60 ? 60 - elapsed : 0;
+  });
+  const [verifyFeedback, setVerifyFeedback] = useState<{
+    tone: 'success' | 'info' | 'error';
+    text: string;
+  } | null>(() => {
+    const raw = localStorage.getItem(`verify_sent_${props.account.uid}`);
+    if (!raw) return null;
+    return {
+      tone: 'info',
+      text: `Email aktivasi sudah dikirim ke ${props.account.email}. Periksa Kotak Masuk, folder Spam, atau Promosi dari noreply@gen-lang-client-0131469651.firebaseapp.com.`,
+    };
+  });
+  const [showManualLinkBox, setShowManualLinkBox] = useState(false);
+  const [manualActivationInput, setManualActivationInput] = useState('');
+  const [applyingManualLink, setApplyingManualLink] = useState(false);
+
+  useEffect(() => {
+    if (verifyCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setVerifyCooldown((c) => (c > 0 ? c - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [verifyCooldown]);
 
   const activeLabel =
     props.activeSection === 'admin'
@@ -252,49 +287,151 @@ export const DashboardShell: React.FC<DashboardShellProps> = (props) => {
         {/* Viewport */}
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
           {props.emailVerified === false && !dismissedVerifyBanner && (
-            <div className="no-print mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/50 dark:text-amber-200">
-              <div className="flex items-center gap-2.5">
-                <i className="fa-solid fa-envelope-open-text text-amber-600 dark:text-amber-400" aria-hidden="true" />
-                <span>
-                  Email <strong>{props.account.email}</strong> belum terverifikasi (opsional). Anda tetap dapat menggunakan seluruh fitur portofolio secara normal.
-                </span>
+            <div className="no-print mb-5 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/50 dark:text-amber-200">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <i className="fa-solid fa-envelope-open-text mt-0.5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                  <div>
+                    <p>
+                      Akun Anda sudah aktif untuk seluruh fitur portofolio. Untuk verifikasi alamat email{' '}
+                      <strong>{props.account.email}</strong> (opsional), kirim tautan verifikasi lalu klik tautan dari{' '}
+                      <span className="font-mono-tabular font-semibold">noreply@gen-lang-client-0131469651.firebaseapp.com</span>.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {props.onSendVerificationEmail && (
+                    <button
+                      type="button"
+                      disabled={sendingVerify || verifyCooldown > 0}
+                      onClick={async () => {
+                        setSendingVerify(true);
+                        try {
+                          const res = await props.onSendVerificationEmail?.();
+                          if (res?.alreadyVerified) {
+                            setVerifyFeedback({
+                              tone: 'success',
+                              text: 'Email Anda ternyata sudah terverifikasi!',
+                            });
+                          } else if (res?.sent) {
+                            setVerifyCooldown(60);
+                            setVerifyFeedback({
+                              tone: 'success',
+                              text: `Email verifikasi berhasil dikirim ke ${props.account.email}. Cek Kotak Masuk, folder Spam, atau tab Promosi, lalu klik tautannya. Status akan otomatis diperbarui saat Anda kembali ke tab ini.`,
+                            });
+                          } else if (res?.error) {
+                            setVerifyFeedback({
+                              tone: 'error',
+                              text: res.error,
+                            });
+                          }
+                        } finally {
+                          setSendingVerify(false);
+                        }
+                      }}
+                      className="rounded-lg bg-amber-600 px-3 py-1.5 font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+                    >
+                      {sendingVerify
+                        ? 'Mengirim...'
+                        : verifyCooldown > 0
+                          ? `Kirim Ulang (${verifyCooldown}d)`
+                          : 'Kirim Email Verifikasi'}
+                    </button>
+                  )}
+                  {props.onRefreshVerification && (
+                    <button
+                      type="button"
+                      disabled={checkingVerify}
+                      onClick={async () => {
+                        setCheckingVerify(true);
+                        try {
+                          const res = await props.onRefreshVerification?.();
+                          if (res && !res.verified) {
+                            setVerifyFeedback({
+                              tone: res.error ? 'error' : 'info',
+                              text:
+                                res.error ||
+                                'Status masih belum terverifikasi. Pastikan Anda sudah mengeklik tautan aktivasi di email (cek juga folder Spam/Promosi), lalu klik Cek Status lagi.',
+                            });
+                          }
+                        } finally {
+                          setCheckingVerify(false);
+                        }
+                      }}
+                      className="rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-100"
+                    >
+                      {checkingVerify ? 'Memeriksa...' : 'Cek Status'}
+                    </button>
+                  )}
+                  {props.onApplyVerificationLink && (
+                    <button
+                      type="button"
+                      onClick={() => setShowManualLinkBox((v) => !v)}
+                      className="rounded-lg border border-amber-300/80 px-2.5 py-1.5 font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                    >
+                      {showManualLinkBox ? 'Sembunyikan' : 'Tempel Tautan'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setDismissedVerifyBanner(true)}
+                    className="rounded-lg px-2 py-1.5 font-medium text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/50"
+                    aria-label="Tutup pemberitahuan"
+                  >
+                    Tutup
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                {props.onSendVerificationEmail && (
-                  <button
-                    type="button"
-                    disabled={sendingVerify}
-                    onClick={async () => {
-                      setSendingVerify(true);
-                      try {
-                        await props.onSendVerificationEmail?.();
-                      } finally {
-                        setSendingVerify(false);
-                      }
-                    }}
-                    className="rounded-lg bg-amber-600 px-3 py-1.5 font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
-                  >
-                    {sendingVerify ? 'Mengirim...' : 'Kirim Email Verifikasi'}
-                  </button>
-                )}
-                {props.onRefreshVerification && (
-                  <button
-                    type="button"
-                    onClick={() => props.onRefreshVerification?.()}
-                    className="rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-100"
-                  >
-                    Cek Status
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setDismissedVerifyBanner(true)}
-                  className="rounded-lg px-2 py-1.5 font-medium text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/50"
-                  aria-label="Tutup pemberitahuan"
+
+              {verifyFeedback && (
+                <p
+                  className={`mt-2.5 rounded-xl px-3 py-2 text-[11px] leading-relaxed ${
+                    verifyFeedback.tone === 'error'
+                      ? 'bg-rose-100 text-rose-900 dark:bg-rose-950/70 dark:text-rose-200'
+                      : verifyFeedback.tone === 'success'
+                        ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-200'
+                        : 'bg-amber-100/80 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100'
+                  }`}
                 >
-                  Tutup
-                </button>
-              </div>
+                  {verifyFeedback.text}
+                </p>
+              )}
+
+              {showManualLinkBox && props.onApplyVerificationLink && (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setApplyingManualLink(true);
+                    try {
+                      const res = await props.onApplyVerificationLink?.(manualActivationInput);
+                      if (res?.error) {
+                        setVerifyFeedback({ tone: 'error', text: res.error });
+                      } else if (res?.verified) {
+                        setManualActivationInput('');
+                        setShowManualLinkBox(false);
+                      }
+                    } finally {
+                      setApplyingManualLink(false);
+                    }
+                  }}
+                  className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-amber-200/80 pt-2.5 dark:border-amber-800/60"
+                >
+                  <input
+                    type="text"
+                    value={manualActivationInput}
+                    onChange={(e) => setManualActivationInput(e.target.value)}
+                    placeholder="Tempel tautan verifikasi dari email (yang berisi ?mode=verifyEmail&oobCode=...)"
+                    className="min-w-[240px] flex-1 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600 dark:border-amber-800 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    type="submit"
+                    disabled={applyingManualLink || !manualActivationInput.trim()}
+                    className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    {applyingManualLink ? 'Mengaktifkan...' : 'Aktifkan Sekarang'}
+                  </button>
+                </form>
+              )}
             </div>
           )}
           <motion.div

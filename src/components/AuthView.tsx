@@ -151,7 +151,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
           })
         );
         // Send verification email in background without blocking dashboard access
-        sendVerificationEmailSafe(cred.user).catch(() => undefined);
+        sendVerificationEmailSafe(cred.user)
+          .then((res) => {
+            if (!res.alreadyVerified) {
+              localStorage.setItem(`verify_sent_${cred.user.uid}`, String(Date.now()));
+            }
+          })
+          .catch(() => undefined);
         onNotify('success', 'Akun berhasil dibuat! Membuka dashboard portofolio Anda...');
       } else if (mode === 'reset') {
         await sendPasswordResetSafe(email.trim());

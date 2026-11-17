@@ -74,6 +74,9 @@ export default function App() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const loggedUidRef = useRef<string | null>(null);
   const listenerNotifiedRef = useRef<boolean>(false);
+  const actionVerifiedRef = useRef<boolean>(false);
+  const returnedFromVerifyRef = useRef<boolean>(false);
+  const lastAutoCheckRef = useRef<number>(0);
 
   const [activeSection, setActiveSection] = useState<DashboardSection>('dashboard');
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -198,6 +201,20 @@ export default function App() {
     }
   }, [notify]);
 
+  const syncVerifiedUserState = useCallback(
+    async (user: User, showSuccessToast = true) => {
+      await user.getIdToken(true).catch(() => undefined);
+      setFirebaseUser(auth.currentUser || user);
+      setEmailVerified(true);
+      localStorage.removeItem(`verify_sent_${user.uid}`);
+      await hydrateUserSession(auth.currentUser || user);
+      if (showSuccessToast) {
+        notify('success', 'Email Anda berhasil diverifikasi dan diaktifkan!');
+      }
+    },
+    [hydrateUserSession, notify]
+  );
+
   // Handle Firebase email verification links (?mode=verifyEmail&oobCode=... or ?verified=1)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -205,22 +222,21 @@ export default function App() {
     const oobCode = params.get('oobCode');
 
     if (mode === 'verifyEmail' && oobCode) {
+      window.history.replaceState({}, '', window.location.pathname);
       applyActionCode(auth, oobCode)
         .then(async () => {
-          window.history.replaceState({}, '', window.location.pathname);
+          actionVerifiedRef.current = true;
           if (auth.currentUser) {
             await auth.currentUser.reload();
-            await auth.currentUser.getIdToken(true);
             if (auth.currentUser.emailVerified) {
-              setFirebaseUser(auth.currentUser);
-              setEmailVerified(true);
-              await hydrateUserSession(auth.currentUser);
+              actionVerifiedRef.current = false;
+              await syncVerifiedUserState(auth.currentUser, true);
+              return;
             }
           }
-          notify('success', 'Email berhasil diverifikasi! Silakan lanjutkan menggunakan dashboard.');
+          notify('success', 'Email berhasil diverifikasi! Memperbarui status akun Anda...');
         })
         .catch((err: unknown) => {
-          window.history.replaceState({}, '', window.location.pathname);
           notify(
             'error',
             err instanceof Error
@@ -229,23 +245,21 @@ export default function App() {
           );
         });
     } else if (params.get('verified') === '1') {
+      returnedFromVerifyRef.current = true;
       window.history.replaceState({}, '', window.location.pathname);
       if (auth.currentUser) {
         auth.currentUser
           .reload()
           .then(async () => {
             if (auth.currentUser?.emailVerified) {
-              await auth.currentUser.getIdToken(true);
-              setFirebaseUser(auth.currentUser);
-              setEmailVerified(true);
-              await hydrateUserSession(auth.currentUser);
-              notify('success', 'Email berhasil diverifikasi!');
+              returnedFromVerifyRef.current = false;
+              await syncVerifiedUserState(auth.currentUser, true);
             }
           })
           .catch(() => undefined);
       }
     }
-  }, [hydrateUserSession, notify]);
+  }, [notify, syncVerifiedUserState]);
 
   // Firebase Auth listener
   useEffect(() => {
@@ -269,10 +283,26 @@ export default function App() {
         return;
       }
 
-      setFirebaseUser(user);
-      setEmailVerified(user.emailVerified);
+      if (!user.emailVerified && navigator.onLine) {
+        await user.reload().catch(() => undefined);
+      }
+      const activeUser = auth.currentUser || user;
+      if (activeUser.emailVerified) {
+        await activeUser.getIdToken(true).catch(() => undefined);
+        localStorage.removeItem(`verify_sent_${activeUser.uid}`);
+      }
+
+      setFirebaseUser(activeUser);
+      setEmailVerified(activeUser.emailVerified);
+
+      if ((returnedFromVerifyRef.current || actionVerifiedRef.current) && activeUser.emailVerified) {
+        returnedFromVerifyRef.current = false;
+        actionVerifiedRef.current = false;
+        notify('success', 'Email Anda berhasil diverifikasi dan diaktifkan!');
+      }
+
       try {
-        await hydrateUserSession(user);
+        await hydrateUserSession(activeUser);
       } catch (err: unknown) {
         notify('error', err instanceof Error ? err.message : 'Gagal memuat profil pengguna dari database.');
       } finally {
@@ -282,6 +312,35 @@ export default function App() {
 
     return () => unsub();
   }, [hydrateUserSession, notify]);
+
+  // Auto-check email verification when user switches back from their email client tab
+  useEffect(() => {
+    if (!firebaseUser || emailVerified) return;
+
+    const checkOnFocus = async () => {
+      if (!auth.currentUser || !navigator.onLine) return;
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - lastAutoCheckRef.current < 4000) return;
+      lastAutoCheckRef.current = now;
+
+      try {
+        await auth.currentUser.reload();
+        if (auth.currentUser.emailVerified) {
+          await syncVerifiedUserState(auth.currentUser, true);
+        }
+      } catch {
+        // Ignore transient focus check failures
+      }
+    };
+
+    window.addEventListener('focus', checkOnFocus);
+    document.addEventListener('visibilitychange', checkOnFocus);
+    return () => {
+      window.removeEventListener('focus', checkOnFocus);
+      document.removeEventListener('visibilitychange', checkOnFocus);
+    };
+  }, [firebaseUser, emailVerified, syncVerifiedUserState]);
 
   // Attach Firestore real-time listeners once authenticated & verified & hydrated
   useEffect(() => {
@@ -495,27 +554,83 @@ export default function App() {
         settings={settings}
         emailVerified={emailVerified}
         onSendVerificationEmail={async () => {
-          if (!auth.currentUser) return;
+          if (!auth.currentUser) {
+            return { sent: false, error: 'Sesi pengguna tidak ditemukan. Silakan masuk ulang.' };
+          }
           try {
-            await sendVerificationEmailSafe(auth.currentUser);
+            const res = await sendVerificationEmailSafe(auth.currentUser);
+            if (res.alreadyVerified) {
+              await syncVerifiedUserState(auth.currentUser, true);
+              return { sent: false, alreadyVerified: true };
+            }
+            localStorage.setItem(`verify_sent_${auth.currentUser.uid}`, String(Date.now()));
             notify(
               'success',
-              `Email verifikasi dikirim ke ${auth.currentUser.email}. Periksa Kotak Masuk atau folder Spam.`
+              `Email aktivasi dikirim ke ${auth.currentUser.email}. Periksa Kotak Masuk atau folder Spam.`
             );
+            return { sent: true, usedFallbackDomain: res.usedFallbackDomain };
           } catch (err: unknown) {
-            notify('error', formatAuthErrorMessage(err).message);
+            const msg = formatAuthErrorMessage(err).message;
+            notify('error', msg);
+            return { sent: false, error: msg };
           }
         }}
         onRefreshVerification={async () => {
-          if (!auth.currentUser) return;
-          await auth.currentUser.reload();
-          if (auth.currentUser.emailVerified) {
-            await auth.currentUser.getIdToken(true);
-            setFirebaseUser(auth.currentUser);
-            setEmailVerified(true);
-            notify('success', 'Email Anda sudah terverifikasi!');
-          } else {
-            notify('info', 'Email belum terverifikasi. Periksa kotak masuk atau folder spam.');
+          if (!auth.currentUser) {
+            return { verified: false, error: 'Sesi pengguna tidak ditemukan.' };
+          }
+          try {
+            await auth.currentUser.reload();
+            if (auth.currentUser.emailVerified) {
+              await syncVerifiedUserState(auth.currentUser, true);
+              return { verified: true };
+            }
+            notify(
+              'info',
+              'Email belum terverifikasi. Klik tautan pada email dari noreply@gen-lang-client-0131469651.firebaseapp.com lalu coba lagi.'
+            );
+            return { verified: false };
+          } catch (err: unknown) {
+            const msg = formatAuthErrorMessage(err).message;
+            notify('error', msg);
+            return { verified: false, error: msg };
+          }
+        }}
+        onApplyVerificationLink={async (rawLinkOrCode: string) => {
+          const trimmed = rawLinkOrCode.trim();
+          if (!trimmed) {
+            return { verified: false, error: 'Tempel tautan atau kode aktivasi dari email terlebih dahulu.' };
+          }
+          let oobCode = trimmed;
+          try {
+            if (trimmed.includes('oobCode=')) {
+              const parsed = new URL(trimmed.startsWith('http') ? trimmed : `https://dummy.local/?${trimmed}`);
+              oobCode = parsed.searchParams.get('oobCode') || trimmed;
+            }
+          } catch {
+            // Fall back to regex extraction
+            const match = trimmed.match(/oobCode=([^&\s]+)/);
+            if (match) oobCode = decodeURIComponent(match[1]);
+          }
+
+          try {
+            await applyActionCode(auth, oobCode);
+            if (auth.currentUser) {
+              await auth.currentUser.reload();
+              if (auth.currentUser.emailVerified) {
+                await syncVerifiedUserState(auth.currentUser, true);
+                return { verified: true };
+              }
+            }
+            notify('success', 'Kode aktivasi berhasil diterapkan!');
+            return { verified: true };
+          } catch (err: unknown) {
+            const msg =
+              err instanceof Error && err.message.includes('invalid-action-code')
+                ? 'Tautan atau kode aktivasi tidak valid atau sudah kedaluwarsa. Kirim ulang email verifikasi.'
+                : formatAuthErrorMessage(err).message;
+            notify('error', msg);
+            return { verified: false, error: msg };
           }
         }}
         documents={documents}

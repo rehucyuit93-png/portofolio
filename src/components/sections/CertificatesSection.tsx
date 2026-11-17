@@ -1,5 +1,11 @@
-import React, { useMemo, useState } from 'react';
-import { deleteStorageFile, openOrDownloadFile, uploadFileToStorage } from '../../lib/storageUpload';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  deleteStorageFile,
+  openOrDownloadFile,
+  resolveStoredFileUrl,
+  syncBlobVisibility,
+  uploadFileToStorage,
+} from '../../lib/storageUpload';
 import type { Certificate } from '../../types/portfolio';
 
 interface CertificatesSectionProps {
@@ -33,7 +39,44 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
   const [storagePath, setStoragePath] = useState('');
   const [isPublic, setIsPublic] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [previewCert, setPreviewCert] = useState<Certificate | null>(null);
+  const [previewBlobUrl, setPreviewBlobUrl] = useState('');
+  const [loadingPreview, setLoadingPreview] = useState(false);
+
+  useEffect(() => {
+    if (!previewCert) {
+      setPreviewBlobUrl('');
+      setLoadingPreview(false);
+      return;
+    }
+    let active = true;
+    let revokeUrl = '';
+    setLoadingPreview(true);
+    resolveStoredFileUrl(previewCert.fileUrl)
+      .then(({ resolvedUrl, isObjectUrl }) => {
+        if (!active) {
+          if (isObjectUrl && resolvedUrl) URL.revokeObjectURL(resolvedUrl);
+          return;
+        }
+        if (isObjectUrl) revokeUrl = resolvedUrl;
+        setPreviewBlobUrl(resolvedUrl);
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          onNotify('error', err instanceof Error ? err.message : 'Gagal memuat pratinjau sertifikat.');
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingPreview(false);
+      });
+
+    return () => {
+      active = false;
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
+  }, [previewCert, onNotify]);
 
   const years = useMemo(
     () => Array.from(new Set(certificates.map((c) => c.year))).sort((a, b) => b - a),
@@ -83,8 +126,9 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
     e.target.value = '';
     if (!file) return;
     setUploading(true);
+    setUploadPct(0);
     try {
-      const res = await uploadFileToStorage('certificates', uid, file);
+      const res = await uploadFileToStorage('certificates', uid, file, setUploadPct);
       setFileUrl(res.downloadUrl);
       setFileName(res.fileName);
       setStoragePath(res.storagePath);
@@ -114,6 +158,7 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
         storagePath,
         isPublic,
       };
+      await syncBlobVisibility(payload.fileUrl, payload.isPublic);
       if (editing) {
         await onUpdate(editing.id, payload);
         onNotify('success', 'Sertifikat berhasil diperbarui.');
@@ -200,14 +245,29 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
               </div>
 
               <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-3.5 text-xs dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => openOrDownloadFile(cert.fileUrl, cert.fileName || cert.eventName, 'open')}
-                  className="inline-flex items-center gap-1.5 font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                >
-                  <i className="fa-solid fa-file-arrow-down" aria-hidden="true" />
-                  <span>Lihat / Unduh</span>
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewCert(cert)}
+                    className="inline-flex items-center gap-1.5 font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                  >
+                    <i className="fa-solid fa-eye" aria-hidden="true" />
+                    <span>Pratinjau</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openOrDownloadFile(cert.fileUrl, cert.fileName || `${cert.eventName}.pdf`, 'download').catch(
+                        (err: unknown) =>
+                          onNotify('error', err instanceof Error ? err.message : 'Gagal mengunduh sertifikat.')
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
+                  >
+                    <i className="fa-solid fa-file-arrow-down" aria-hidden="true" />
+                    <span>Unduh</span>
+                  </button>
+                </div>
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
@@ -304,8 +364,12 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
                 onChange={handleUpload}
                 className="mt-1.5 w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-950"
               />
-              {uploading && <p className="mt-1 text-xs text-blue-600">Mengunggah...</p>}
-              {fileUrl.startsWith('data:') ? (
+              {uploading && (
+                <p className="mt-1 text-xs font-medium text-blue-600">
+                  Mengunggah... {uploadPct > 0 ? `${uploadPct}%` : ''}
+                </p>
+              )}
+              {fileUrl.startsWith('data:') || fileUrl.startsWith('firestore-blob://') ? (
                 <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
                   <span className="truncate font-medium">
                     <i className="fa-solid fa-circle-check mr-1.5" aria-hidden="true" />
@@ -316,6 +380,7 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
                     onClick={() => {
                       setFileUrl('');
                       setFileName('');
+                      setStoragePath('');
                     }}
                     className="font-semibold underline shrink-0"
                   >
@@ -374,6 +439,73 @@ export const CertificatesSection: React.FC<CertificatesSectionProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {previewCert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">{previewCert.eventName}</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {previewCert.organizer} · {previewCert.year}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    openOrDownloadFile(
+                      previewCert.fileUrl,
+                      previewCert.fileName || `${previewCert.eventName}.pdf`,
+                      'download'
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                >
+                  <i className="fa-solid fa-download" aria-hidden="true" />
+                  <span>Unduh</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewCert(null)}
+                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  aria-label="Tutup pratinjau"
+                >
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto p-5">
+              {loadingPreview ? (
+                <div className="flex h-[55vh] flex-col items-center justify-center gap-3 text-xs text-slate-500">
+                  <div className="h-8 w-8 animate-spin rounded-full border-3 border-blue-600 border-t-transparent" />
+                  <span>Memuat berkas sertifikat...</span>
+                </div>
+              ) : /\.(png|jpe?g|webp|gif)$/i.test(previewCert.fileName || '') ||
+                previewCert.fileUrl.startsWith('data:image/') ? (
+                <img
+                  src={previewBlobUrl || previewCert.fileUrl}
+                  alt={previewCert.eventName}
+                  referrerPolicy="no-referrer"
+                  className="mx-auto max-h-[60vh] rounded-xl object-contain"
+                />
+              ) : (
+                <iframe
+                  title={previewCert.eventName}
+                  src={previewBlobUrl || previewCert.fileUrl}
+                  className="h-[60vh] w-full rounded-xl border border-slate-200 dark:border-slate-800"
+                />
+              )}
+              {previewCert.description && (
+                <p className="mt-4 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                  {previewCert.description}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

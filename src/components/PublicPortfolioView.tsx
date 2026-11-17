@@ -262,7 +262,11 @@ export const PublicPortfolioView: React.FC<PublicPortfolioViewProps> = ({
                       {cert.fileUrl && (
                         <button
                           type="button"
-                          onClick={() => openOrDownloadFile(cert.fileUrl, cert.eventName, 'open')}
+                          onClick={() =>
+                            openOrDownloadFile(cert.fileUrl, cert.eventName, 'open').catch((err: unknown) =>
+                              onNotify('error', err instanceof Error ? err.message : 'Gagal membuka berkas.')
+                            )
+                          }
                           className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400"
                         >
                           <span>Lihat Berkas</span>
@@ -348,7 +352,11 @@ export const PublicPortfolioView: React.FC<PublicPortfolioViewProps> = ({
                         {d.fileUrl && (
                           <button
                             type="button"
-                            onClick={() => openOrDownloadFile(d.fileUrl, d.title, 'download')}
+                            onClick={() =>
+                              openOrDownloadFile(d.fileUrl, d.title, 'download').catch((err: unknown) =>
+                                onNotify('error', err instanceof Error ? err.message : 'Gagal mengunduh berkas.')
+                              )
+                            }
                             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 shrink-0"
                           >
                             <i className="fa-solid fa-download" aria-hidden="true" />

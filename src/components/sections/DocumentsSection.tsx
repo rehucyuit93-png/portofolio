@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  dataUrlToBlobUrl,
   deleteStorageFile,
   openOrDownloadFile,
+  resolveStoredFileUrl,
+  syncBlobVisibility,
   uploadFileToStorage,
 } from '../../lib/storageUpload';
 import type { FileTypeTag, PortfolioDocument } from '../../types/portfolio';
@@ -108,20 +109,40 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
   };
 
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string>('');
+  const [loadingPreview, setLoadingPreview] = useState(false);
 
   useEffect(() => {
     if (!previewDoc) {
       setPreviewBlobUrl('');
+      setLoadingPreview(false);
       return;
     }
-    if (previewDoc.fileUrl.startsWith('data:')) {
-      const blobUrl = dataUrlToBlobUrl(previewDoc.fileUrl);
-      setPreviewBlobUrl(blobUrl);
-      return () => URL.revokeObjectURL(blobUrl);
-    }
-    setPreviewBlobUrl(previewDoc.fileUrl);
-    return undefined;
-  }, [previewDoc]);
+    let active = true;
+    let revokeUrl = '';
+    setLoadingPreview(true);
+    resolveStoredFileUrl(previewDoc.fileUrl)
+      .then(({ resolvedUrl, isObjectUrl }) => {
+        if (!active) {
+          if (isObjectUrl && resolvedUrl) URL.revokeObjectURL(resolvedUrl);
+          return;
+        }
+        if (isObjectUrl) revokeUrl = resolvedUrl;
+        setPreviewBlobUrl(resolvedUrl);
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          onNotify('error', err instanceof Error ? err.message : 'Gagal memuat pratinjau dokumen.');
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingPreview(false);
+      });
+
+    return () => {
+      active = false;
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
+  }, [previewDoc, onNotify]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -167,6 +188,7 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
         storagePath,
         isPublic,
       };
+      await syncBlobVisibility(payload.fileUrl, payload.isPublic);
       if (editing) {
         await onUpdate(editing.id, payload);
         onNotify('success', 'Dokumen berhasil diperbarui.');
@@ -379,7 +401,7 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 URL Berkas
               </label>
-              {fileUrl.startsWith('data:') ? (
+              {fileUrl.startsWith('data:') || fileUrl.startsWith('firestore-blob://') ? (
                 <div className="mt-1.5 flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
                   <span className="truncate font-medium">
                     <i className="fa-solid fa-circle-check mr-1.5" aria-hidden="true" />
@@ -390,6 +412,7 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
                     onClick={() => {
                       setFileUrl('');
                       setFileName('');
+                      setStoragePath('');
                     }}
                     className="font-semibold underline shrink-0"
                   >
@@ -535,9 +558,14 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
             </div>
 
             <div className="flex-1 overflow-auto p-5">
-              {previewDoc.fileType === 'JPG' || previewDoc.fileType === 'PNG' ? (
+              {loadingPreview ? (
+                <div className="flex h-[55vh] flex-col items-center justify-center gap-3 text-xs text-slate-500">
+                  <div className="h-8 w-8 animate-spin rounded-full border-3 border-blue-600 border-t-transparent" />
+                  <span>Memuat berkas dokumen...</span>
+                </div>
+              ) : previewDoc.fileType === 'JPG' || previewDoc.fileType === 'PNG' ? (
                 <img
-                  src={previewDoc.fileUrl}
+                  src={previewBlobUrl || previewDoc.fileUrl}
                   alt={previewDoc.title}
                   referrerPolicy="no-referrer"
                   className="mx-auto max-h-[60vh] rounded-xl object-contain"

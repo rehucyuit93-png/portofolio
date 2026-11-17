@@ -222,6 +222,27 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidFileBlob(data) {
+      return data.keys().hasAll(['uid', 'fileName', 'mimeType', 'chunkCount', 'totalSize', 'isPublic', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'fileName', 'mimeType', 'chunkCount', 'totalSize', 'isPublic', 'createdAt'])
+        && isValidId(data.uid)
+        && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 255
+        && data.mimeType is string && data.mimeType.size() >= 1 && data.mimeType.size() <= 150
+        && data.chunkCount is int && data.chunkCount >= 1 && data.chunkCount <= 30
+        && data.totalSize is int && data.totalSize >= 1 && data.totalSize <= 10000000
+        && data.isPublic is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidFileBlobChunk(data) {
+      return data.keys().hasAll(['uid', 'index', 'data', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'index', 'data', 'createdAt'])
+        && isValidId(data.uid)
+        && data.index is int && data.index >= 0 && data.index < 30
+        && data.data is string && data.data.size() >= 1 && data.data.size() <= 600000
+        && data.createdAt is timestamp;
+    }
+
     // Collection rules
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
@@ -443,6 +464,49 @@ service cloud.firestore {
           isAdmin()
         );
       allow delete: if isValidUsername(username) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
+    }
+
+    match /fileBlobs/{blobId} {
+      allow get: if isValidId(blobId) && (
+        resource == null ||
+        resource.data.isPublic == true ||
+        (isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin()))
+      );
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
+        && isValidId(blobId)
+        && isValidFileBlob(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(blobId)
+        && isValidFileBlob(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && (
+          (existing().uid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['isPublic'])) ||
+          isAdmin()
+        );
+      allow delete: if isValidId(blobId) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
+
+      match /chunks/{chunkId} {
+        allow get: if isValidId(blobId)
+          && isValidId(chunkId)
+          && (
+            get(/databases/$(database)/documents/fileBlobs/$(blobId)).data.isPublic == true ||
+            (isSignedIn() && (get(/databases/$(database)/documents/fileBlobs/$(blobId)).data.uid == request.auth.uid || isAdmin()))
+          );
+        allow list: if false;
+        allow create: if isSignedIn()
+          && isValidId(blobId)
+          && isValidId(chunkId)
+          && isValidFileBlobChunk(incoming())
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && get(/databases/$(database)/documents/fileBlobs/$(blobId)).data.uid == request.auth.uid;
+        allow update: if false;
+        allow delete: if isValidId(blobId) && isValidId(chunkId) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
+      }
     }
   }
 }

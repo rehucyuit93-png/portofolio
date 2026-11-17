@@ -201,6 +201,33 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "username", "fullName", "isPublished", "updatedAt"]
+    },
+    "FileBlob": {
+      "title": "FileBlob",
+      "description": "Chunked file metadata stored in Firestore when Firebase Storage bucket is unavailable.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "mimeType": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "chunkCount": { "type": "integer" },
+        "totalSize": { "type": "integer" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "fileName", "mimeType", "chunkCount", "totalSize", "isPublic", "createdAt"]
+    },
+    "FileBlobChunk": {
+      "title": "FileBlobChunk",
+      "description": "Individual base64 chunk belonging to a FileBlob parent document.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "index": { "type": "integer" },
+        "data": { "type": "string", "minLength": 1, "maxLength": 600000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "index", "data", "createdAt"]
     }
   },
   "firestore": {
@@ -247,6 +274,14 @@
     "/publicPortfolios/{username}": {
       "schema": { "$ref": "#/entities/PublicPortfolio" },
       "description": "Sanitized public portfolio pages accessible by username slug."
+    },
+    "/fileBlobs/{blobId}": {
+      "schema": { "$ref": "#/entities/FileBlob" },
+      "description": "Metadata for chunked file uploads stored in Firestore."
+    },
+    "/fileBlobs/{blobId}/chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/FileBlobChunk" },
+      "description": "Individual chunks for a chunked file upload."
     }
   }
 }

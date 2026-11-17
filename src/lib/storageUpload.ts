@@ -1,5 +1,13 @@
+import {
+  deleteDoc,
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
-import { firebaseConfig, storage } from './firebase';
+import { db, firebaseConfig, storage } from './firebase';
 
 export type StorageFolder =
   | 'profile-photo'
@@ -16,6 +24,11 @@ export interface UploadResult {
   fileSize: number;
   storedInline?: boolean;
 }
+
+const MAX_INLINE_SINGLE_DOC_BYTES = 480 * 1024;
+const MAX_CHUNKED_DOC_BYTES = 5 * 1024 * 1024; // 5 MB via Firestore chunked storage
+const CHUNK_CHAR_SIZE = 420000;
+const BLOB_CACHE = new Map<string, Blob>();
 
 export function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
@@ -37,7 +50,6 @@ async function isStorageBucketAvailable(): Promise<boolean> {
       `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(firebaseConfig.storageBucket)}/o`,
       { method: 'GET', signal: controller.signal }
     );
-    // 404 means the Storage bucket does not exist / has not been initialized
     cachedBucketAvailable = resp.status !== 404;
     return cachedBucketAvailable;
   } catch {
@@ -118,12 +130,72 @@ async function compressImageToDataUrl(
   );
 }
 
+async function uploadChunkedBlobToFirestore(
+  uid: string,
+  file: File,
+  dataUrl: string,
+  onProgress?: (percent: number) => void
+): Promise<UploadResult> {
+  const commaIdx = dataUrl.indexOf(',');
+  const header = commaIdx >= 0 ? dataUrl.slice(0, commaIdx) : '';
+  const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+  const mimeMatch = header.match(/data:([^;]+)/);
+  const mimeType = (mimeMatch ? mimeMatch[1] : file.type) || 'application/octet-stream';
+
+  const chunks: string[] = [];
+  for (let i = 0; i < base64.length; i += CHUNK_CHAR_SIZE) {
+    chunks.push(base64.slice(i, i + CHUNK_CHAR_SIZE));
+  }
+  if (chunks.length === 0 || chunks.length > 28) {
+    throw new Error('Ukuran berkas melebihi kapasitas penyimpanan pecahan Firestore (maks 5 MB).');
+  }
+
+  const blobId = `blob_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const parentRef = doc(db, 'fileBlobs', blobId);
+
+  onProgress?.(20);
+  await setDoc(parentRef, {
+    uid,
+    fileName: file.name.slice(0, 255) || 'berkas',
+    mimeType: mimeType.slice(0, 150),
+    chunkCount: chunks.length,
+    totalSize: file.size,
+    isPublic: true,
+    createdAt: serverTimestamp(),
+  });
+
+  for (let i = 0; i < chunks.length; i++) {
+    await setDoc(doc(db, 'fileBlobs', blobId, 'chunks', String(i)), {
+      uid,
+      index: i,
+      data: chunks[i],
+      createdAt: serverTimestamp(),
+    });
+    const pct = 20 + Math.round(((i + 1) / chunks.length) * 78);
+    onProgress?.(pct);
+  }
+
+  const blob = base64ToBlob(base64, mimeType);
+  BLOB_CACHE.set(blobId, blob);
+
+  onProgress?.(100);
+  const refUrl = `firestore-blob://${blobId}`;
+  return {
+    downloadUrl: refUrl,
+    storagePath: refUrl,
+    fileName: file.name,
+    fileSize: file.size,
+    storedInline: true,
+  };
+}
+
 async function createInlineFallback(
   folder: StorageFolder,
+  uid: string,
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadResult> {
-  onProgress?.(35);
+  onProgress?.(25);
   if (isImageFile(file)) {
     const maxDim = folder === 'profile-photo' ? 360 : 880;
     const maxChars = folder === 'profile-photo' ? 90000 : 145000;
@@ -138,28 +210,25 @@ async function createInlineFallback(
     };
   }
 
-  // Non-image documents/certificates (PDF, DOCX, PPT, XLSX)
-  const MAX_INLINE_DOC_BYTES = 450 * 1024;
-  if (file.size > MAX_INLINE_DOC_BYTES) {
+  if (file.size > MAX_CHUNKED_DOC_BYTES) {
     throw new Error(
-      `Bucket Firebase Storage belum aktif sehingga unggah langsung non-gambar dibatasi maksimal 450 KB (file Anda ${(file.size / 1024).toFixed(0)} KB). Kompres file di bawah 450 KB atau tempel URL Google Drive/HTTPS.`
+      `Ukuran berkas maksimal 5 MB saat disimpan di database (file Anda ${(file.size / (1024 * 1024)).toFixed(1)} MB). Kompres berkas atau tempel URL Google Drive/HTTPS.`
     );
   }
 
   const dataUrl = await readFileAsDataUrl(file);
-  if (dataUrl.length > 680000) {
-    throw new Error(
-      'Ukuran berkas setelah encoding melebihi batas 680 KB. Kompres berkas atau tempel URL HTTPS.'
-    );
+  if (file.size <= MAX_INLINE_SINGLE_DOC_BYTES && dataUrl.length <= 680000) {
+    onProgress?.(100);
+    return {
+      downloadUrl: dataUrl,
+      storagePath: '',
+      fileName: file.name,
+      fileSize: file.size,
+      storedInline: true,
+    };
   }
-  onProgress?.(100);
-  return {
-    downloadUrl: dataUrl,
-    storagePath: '',
-    fileName: file.name,
-    fileSize: file.size,
-    storedInline: true,
-  };
+
+  return uploadChunkedBlobToFirestore(uid, file, dataUrl, onProgress);
 }
 
 function mapStorageError(error: unknown): string {
@@ -186,7 +255,7 @@ export async function uploadFileToStorage(
 ): Promise<UploadResult> {
   const bucketReady = await isStorageBucketAvailable();
   if (!bucketReady) {
-    return createInlineFallback(folder, file, onProgress);
+    return createInlineFallback(folder, uid, file, onProgress);
   }
 
   const safeName = `${Date.now()}_${sanitizeFileName(file.name)}`;
@@ -240,20 +309,62 @@ export async function uploadFileToStorage(
     return result;
   } catch (err) {
     const msg = mapStorageError(err);
-    console.warn('Storage upload unavailable, switching to inline compression fallback:', msg);
-    // If bucket rejected or timed out, fallback seamlessly for images & <=450KB docs
-    return createInlineFallback(folder, file, onProgress);
+    console.warn('Storage upload unavailable, switching to Firestore fallback:', msg);
+    return createInlineFallback(folder, uid, file, onProgress);
+  }
+}
+
+export async function syncBlobVisibility(fileUrl: string, isPublic: boolean): Promise<void> {
+  if (!fileUrl.startsWith('firestore-blob://')) return;
+  const blobId = fileUrl.replace('firestore-blob://', '').trim();
+  if (!blobId) return;
+  try {
+    await updateDoc(doc(db, 'fileBlobs', blobId), { isPublic });
+  } catch {
+    // Ignore if already deleted or unchanged
   }
 }
 
 export async function deleteStorageFile(storagePath?: string): Promise<void> {
   if (!storagePath) return;
+  if (storagePath.startsWith('firestore-blob://')) {
+    const blobId = storagePath.replace('firestore-blob://', '').trim();
+    if (!blobId) return;
+    BLOB_CACHE.delete(blobId);
+    try {
+      const parentRef = doc(db, 'fileBlobs', blobId);
+      const snap = await getDoc(parentRef);
+      if (snap.exists()) {
+        const count = Number((snap.data() as { chunkCount?: number }).chunkCount || 0);
+        await Promise.all(
+          Array.from({ length: count }, (_, idx) =>
+            deleteDoc(doc(db, 'fileBlobs', blobId, 'chunks', String(idx))).catch(() => undefined)
+          )
+        );
+        await deleteDoc(parentRef).catch(() => undefined);
+      }
+    } catch (err) {
+      console.warn('Blob delete warning:', err);
+    }
+    return;
+  }
+
   try {
     const storageRef = ref(storage, storagePath);
     await deleteObject(storageRef);
   } catch (err) {
     console.warn('Storage delete warning:', err);
   }
+}
+
+function base64ToBlob(base64: string, mime: string): Blob {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
 }
 
 export function dataUrlToBlobUrl(dataUrl: string): string {
@@ -264,31 +375,59 @@ export function dataUrlToBlobUrl(dataUrl: string): string {
   const base64 = parts[1];
   const mimeMatch = header.match(/data:([^;]+)/);
   const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
-  const binary = atob(base64);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const blob = new Blob([bytes], { type: mime });
-  return URL.createObjectURL(blob);
+  return URL.createObjectURL(base64ToBlob(base64, mime));
 }
 
-export function openOrDownloadFile(
+export async function resolveStoredFileUrl(
+  url: string
+): Promise<{ resolvedUrl: string; isObjectUrl: boolean }> {
+  if (!url) return { resolvedUrl: '', isObjectUrl: false };
+  if (url.startsWith('data:')) {
+    return { resolvedUrl: dataUrlToBlobUrl(url), isObjectUrl: true };
+  }
+  if (url.startsWith('firestore-blob://')) {
+    const blobId = url.replace('firestore-blob://', '').trim();
+    const cached = BLOB_CACHE.get(blobId);
+    if (cached) {
+      return { resolvedUrl: URL.createObjectURL(cached), isObjectUrl: true };
+    }
+    const parentSnap = await getDoc(doc(db, 'fileBlobs', blobId));
+    if (!parentSnap.exists()) {
+      throw new Error('Berkas tidak ditemukan di database.');
+    }
+    const meta = parentSnap.data() as { chunkCount: number; mimeType?: string };
+    const chunkSnaps = await Promise.all(
+      Array.from({ length: meta.chunkCount }, (_, idx) =>
+        getDoc(doc(db, 'fileBlobs', blobId, 'chunks', String(idx)))
+      )
+    );
+    const fullBase64 = chunkSnaps
+      .map((s) => (s.exists() ? String((s.data() as { data?: string }).data || '') : ''))
+      .join('');
+    if (!fullBase64) {
+      throw new Error('Isi berkas kosong atau rusak.');
+    }
+    const blob = base64ToBlob(fullBase64, meta.mimeType || 'application/octet-stream');
+    BLOB_CACHE.set(blobId, blob);
+    return { resolvedUrl: URL.createObjectURL(blob), isObjectUrl: true };
+  }
+  return { resolvedUrl: url, isObjectUrl: false };
+}
+
+export async function openOrDownloadFile(
   url: string,
   fileName = 'berkas',
   mode: 'open' | 'download' = 'open'
-): void {
+): Promise<void> {
   if (!url) return;
-  const isData = url.startsWith('data:');
-  const resolvedUrl = isData ? dataUrlToBlobUrl(url) : url;
+  const { resolvedUrl, isObjectUrl } = await resolveStoredFileUrl(url);
 
   const a = document.createElement('a');
   a.href = resolvedUrl;
-  if (mode === 'download') {
+  if (mode === 'download' || url.startsWith('firestore-blob://')) {
     a.download = fileName;
   }
-  if (!isData || mode === 'open') {
+  if (!isObjectUrl || mode === 'open') {
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
   }
@@ -296,7 +435,7 @@ export function openOrDownloadFile(
   a.click();
   a.remove();
 
-  if (isData) {
+  if (isObjectUrl) {
     window.setTimeout(() => URL.revokeObjectURL(resolvedUrl), 60000);
   }
 }
