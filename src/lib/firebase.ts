@@ -1,5 +1,11 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  type User,
+} from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -25,6 +31,108 @@ export function getQuotaUpgradeUrl(): string {
   return `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
 }
 
+export function getAuthorizedDomainsUrl(): string {
+  return `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`;
+}
+
+export function getAuthProvidersUrl(): string {
+  return `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`;
+}
+
+export async function sendVerificationEmailSafe(
+  user: User
+): Promise<{ usedFallbackDomain: boolean }> {
+  try {
+    await sendEmailVerification(user, {
+      url: `${window.location.origin}/?verified=1`,
+      handleCodeInApp: false,
+    });
+    return { usedFallbackDomain: false };
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code || '';
+    if (code === 'auth/unauthorized-domain' || code === 'auth/invalid-continue-uri') {
+      // Fallback to Firebase's default authDomain handler when preview domain isn't allowlisted yet
+      await sendEmailVerification(user);
+      return { usedFallbackDomain: true };
+    }
+    throw err;
+  }
+}
+
+export async function sendPasswordResetSafe(email: string): Promise<void> {
+  try {
+    await sendPasswordResetEmail(auth, email, {
+      url: window.location.origin,
+      handleCodeInApp: false,
+    });
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code || '';
+    if (code === 'auth/unauthorized-domain' || code === 'auth/invalid-continue-uri') {
+      await sendPasswordResetEmail(auth, email);
+      return;
+    }
+    throw err;
+  }
+}
+
+export function formatAuthErrorMessage(err: unknown): {
+  message: string;
+  isUnauthorizedDomain?: boolean;
+  isProviderDisabled?: boolean;
+  domain?: string;
+} {
+  const code = (err as { code?: string })?.code || '';
+  const raw = err instanceof Error ? err.message : String(err);
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+
+  if (code === 'auth/unauthorized-domain' || raw.includes('auth/unauthorized-domain')) {
+    return {
+      message: `Domain "${currentHost}" belum diizinkan di Firebase Authentication. Tambahkan domain ini pada Firebase Console -> Authentication -> Settings -> Authorized domains.`,
+      isUnauthorizedDomain: true,
+      domain: currentHost,
+    };
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return {
+      message:
+        'Provider Email/Password belum diaktifkan di Firebase Console. Aktifkan di Authentication -> Sign-in method -> Email/Password, atau gunakan tombol Login dengan Google.',
+      isProviderDisabled: true,
+    };
+  }
+  if (code === 'auth/too-many-requests') {
+    return {
+      message:
+        'Terlalu banyak permintaan pengiriman email dalam waktu singkat. Tunggu 1-2 menit sebelum mencoba lagi.',
+    };
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return {
+      message: 'Jendela login Google ditutup sebelum proses selesai. Silakan coba lagi.',
+    };
+  }
+  if (code === 'auth/popup-blocked') {
+    return {
+      message: 'Popup login diblokir oleh browser. Izinkan popup untuk situs ini lalu coba lagi.',
+    };
+  }
+  if (
+    code === 'auth/invalid-credential' ||
+    code === 'auth/wrong-password' ||
+    code === 'auth/user-not-found'
+  ) {
+    return { message: 'Email atau kata sandi tidak sesuai.' };
+  }
+  if (code === 'auth/email-already-in-use') {
+    return {
+      message: 'Email sudah terdaftar. Silakan masuk atau gunakan fitur Reset Kata Sandi.',
+    };
+  }
+  if (code === 'auth/weak-password') {
+    return { message: 'Kata sandi terlalu lemah. Gunakan minimal 6 karakter.' };
+  }
+  return { message: raw || 'Terjadi kesalahan autentikasi.' };
+}
+
 export async function testFirestoreConnection(): Promise<FirestoreConnectionStatus> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
@@ -34,7 +142,7 @@ export async function testFirestoreConnection(): Promise<FirestoreConnectionStat
     const code = (error as { code?: string })?.code || '';
 
     if (
-      rawMsg.includes("Free daily read units per project") ||
+      rawMsg.includes('Free daily read units per project') ||
       rawMsg.includes('Quota exceeded') ||
       code === 'resource-exhausted'
     ) {

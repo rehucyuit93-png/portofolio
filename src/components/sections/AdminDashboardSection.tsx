@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { sendPasswordResetEmail } from 'firebase/auth';
 import {
   Bar,
   BarChart,
@@ -12,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { auth } from '../../lib/firebase';
+import { formatAuthErrorMessage, sendPasswordResetSafe } from '../../lib/firebase';
 import { formatFirestoreErrorForUser } from '../../lib/firestoreError';
 import {
   adminCreateUserRecord,
@@ -170,10 +169,10 @@ export const AdminDashboardSection: React.FC<AdminDashboardSectionProps> = ({
 
   const handleResetPassword = async (email: string) => {
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetSafe(email);
       onNotify('success', `Email reset password dikirim ke ${email}.`);
     } catch (err: unknown) {
-      onNotify('error', err instanceof Error ? err.message : 'Gagal mengirim email reset password.');
+      onNotify('error', formatAuthErrorMessage(err).message);
     }
   };
 

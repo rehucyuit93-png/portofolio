@@ -1,27 +1,40 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   browserLocalPersistence,
   browserSessionPersistence,
   createUserWithEmailAndPassword,
-  sendEmailVerification,
-  sendPasswordResetEmail,
   setPersistence,
   signInWithEmailAndPassword,
   signInWithPopup,
   updateProfile,
   type User,
 } from 'firebase/auth';
-import { auth, firebaseConfig, googleProvider } from '../lib/firebase';
+import {
+  auth,
+  formatAuthErrorMessage,
+  getAuthProvidersUrl,
+  getAuthorizedDomainsUrl,
+  googleProvider,
+  sendPasswordResetSafe,
+  sendVerificationEmailSafe,
+} from '../lib/firebase';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface AuthViewProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   unverifiedUser: User | null;
-  onVerificationRefreshed: () => Promise<void>;
+  onVerificationRefreshed: (silent?: boolean) => Promise<void>;
   onSignOutUnverified: () => Promise<void>;
   onOpenSamplePortfolio: (username: string) => void;
   onNotify: (type: 'success' | 'error' | 'info', message: string) => void;
+}
+
+interface AuthErrorState {
+  message: string;
+  isUnauthorizedDomain?: boolean;
+  isProviderDisabled?: boolean;
+  domain?: string;
 }
 
 export const AuthView: React.FC<AuthViewProps> = ({
@@ -42,8 +55,80 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [jabatanKelas, setJabatanKelas] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [resendingVerification, setResendingVerification] = useState(false);
+  const [authError, setAuthError] = useState<AuthErrorState | null>(null);
   const [publicSlugLookup, setPublicSlugLookup] = useState('');
+
+  // Auto-check email verification when user returns to tab after clicking email link
+  useEffect(() => {
+    if (!unverifiedUser) return;
+    const checkNow = () => {
+      onVerificationRefreshed(true).catch(() => undefined);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') checkNow();
+    };
+    window.addEventListener('focus', checkNow);
+    document.addEventListener('visibilitychange', handleVisibility);
+    const interval = window.setInterval(checkNow, 5000);
+    return () => {
+      window.removeEventListener('focus', checkNow);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.clearInterval(interval);
+    };
+  }, [unverifiedUser, onVerificationRefreshed]);
+
+  const handleCopyDomain = async (domain: string) => {
+    try {
+      await navigator.clipboard.writeText(domain);
+      onNotify('success', `Domain "${domain}" disalin ke clipboard.`);
+    } catch {
+      onNotify('info', `Salin manual domain ini: ${domain}`);
+    }
+  };
+
+  const renderAuthErrorBox = (errState: AuthErrorState) => (
+    <div
+      role="alert"
+      className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-xs leading-relaxed text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-200"
+    >
+      <p>{errState.message}</p>
+      {errState.isUnauthorizedDomain && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          {errState.domain && (
+            <button
+              type="button"
+              onClick={() => handleCopyDomain(errState.domain!)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-2.5 py-1 font-mono-tabular font-semibold text-rose-900 hover:bg-rose-100 dark:border-rose-800 dark:bg-slate-900 dark:text-rose-100"
+            >
+              <i className="fa-solid fa-copy text-[10px]" aria-hidden="true" />
+              <span>Salin: {errState.domain}</span>
+            </button>
+          )}
+          <a
+            href={getAuthorizedDomainsUrl()}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 font-semibold underline hover:text-rose-950 dark:hover:text-white"
+          >
+            <span>Buka Firebase Console → Authorized domains</span>
+            <i className="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true" />
+          </a>
+        </div>
+      )}
+      {errState.isProviderDisabled && (
+        <a
+          href={getAuthProvidersUrl()}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 font-semibold underline hover:text-rose-950 dark:hover:text-white"
+        >
+          <span>Buka Firebase Console → Sign-in method</span>
+          <i className="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true" />
+        </a>
+      )}
+    </div>
+  );
 
   const handleGoogleLogin = async () => {
     setAuthError(null);
@@ -53,9 +138,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
       await signInWithPopup(auth, googleProvider);
       onNotify('success', 'Berhasil masuk dengan akun Google.');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Gagal masuk dengan Google.';
-      setAuthError(msg);
-      onNotify('error', msg);
+      const formatted = formatAuthErrorMessage(err);
+      setAuthError(formatted);
+      onNotify('error', formatted.message);
     } finally {
       setLoading(false);
     }
@@ -74,7 +159,14 @@ export const AuthView: React.FC<AuthViewProps> = ({
         if (cred.user.emailVerified) {
           onNotify('success', 'Selamat datang kembali di KaryaLoka.');
         } else {
-          onNotify('info', 'Silakan verifikasi email Anda terlebih dahulu.');
+          try {
+            await sendVerificationEmailSafe(cred.user);
+            onNotify('info', 'Email belum terverifikasi. Tautan verifikasi baru telah dikirim ke email Anda.');
+          } catch (verErr: unknown) {
+            const formatted = formatAuthErrorMessage(verErr);
+            setAuthError(formatted);
+            onNotify('info', 'Silakan verifikasi email Anda terlebih dahulu.');
+          }
         }
       } else if (mode === 'register') {
         if (!fullName.trim()) {
@@ -92,32 +184,24 @@ export const AuthView: React.FC<AuthViewProps> = ({
           })
         );
         try {
-          await sendEmailVerification(cred.user);
-        } catch {
-          // User can resend from verification view
+          await sendVerificationEmailSafe(cred.user);
+          onNotify(
+            'success',
+            'Akun dibuat! Tautan verifikasi telah dikirim ke email Anda. Periksa kotak masuk atau folder spam.'
+          );
+        } catch (verErr: unknown) {
+          const formatted = formatAuthErrorMessage(verErr);
+          setAuthError(formatted);
+          onNotify('error', `Akun dibuat, namun gagal mengirim email verifikasi: ${formatted.message}`);
         }
-        onNotify(
-          'success',
-          'Akun dibuat! Tautan verifikasi telah dikirim ke email Anda. Verifikasi email untuk mengaktifkan akses portofolio.'
-        );
       } else if (mode === 'reset') {
-        await sendPasswordResetEmail(auth, email.trim());
+        await sendPasswordResetSafe(email.trim());
         onNotify('success', 'Tautan reset password telah dikirim ke alamat email Anda.');
         setMode('login');
       }
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code || '';
-      if (code === 'auth/operation-not-allowed') {
-        setAuthError(
-          'Provider Email/Password belum diaktifkan di Firebase Console. Aktifkan di Firebase Console -> Authentication -> Sign-in method -> Email/Password, atau gunakan tombol Login dengan Google.'
-        );
-      } else if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
-        setAuthError('Email atau kata sandi tidak sesuai.');
-      } else if (code === 'auth/email-already-in-use') {
-        setAuthError('Email sudah terdaftar. Silakan masuk atau gunakan fitur Reset Password.');
-      } else {
-        setAuthError(err instanceof Error ? err.message : 'Terjadi kesalahan autentikasi.');
-      }
+      const formatted = formatAuthErrorMessage(err);
+      setAuthError(formatted);
     } finally {
       setLoading(false);
     }
@@ -214,40 +298,48 @@ export const AuthView: React.FC<AuthViewProps> = ({
                       <span className="font-semibold text-slate-900 dark:text-white">
                         {unverifiedUser.email}
                       </span>
-                      . Klik tautan di email Anda, lalu tekan tombol di bawah untuk masuk ke dashboard.
+                      . Periksa Kotak Masuk atau folder Spam, klik tautan verifikasi, lalu kembali ke halaman ini.
                     </p>
                   </div>
+                  {authError && renderAuthErrorBox(authError)}
                   <div className="flex flex-col gap-3">
                     <button
                       type="button"
-                      onClick={onVerificationRefreshed}
+                      onClick={() => onVerificationRefreshed(false)}
                       className="w-full rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
                     >
                       Saya Sudah Verifikasi Email
                     </button>
                     <button
                       type="button"
+                      disabled={resendingVerification}
                       onClick={async () => {
+                        setAuthError(null);
+                        setResendingVerification(true);
                         try {
-                          await sendEmailVerification(unverifiedUser);
-                          onNotify('success', 'Email verifikasi dikirim ulang.');
+                          await sendVerificationEmailSafe(unverifiedUser);
+                          onNotify('success', 'Email verifikasi dikirim ulang. Cek kotak masuk atau folder spam.');
                         } catch (err: unknown) {
-                          onNotify(
-                            'error',
-                            err instanceof Error ? err.message : 'Gagal mengirim ulang email verifikasi.'
-                          );
+                          const formatted = formatAuthErrorMessage(err);
+                          setAuthError(formatted);
+                          onNotify('error', formatted.message);
+                        } finally {
+                          setResendingVerification(false);
                         }
                       }}
-                      className="w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                      className="w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                     >
-                      Kirim Ulang Tautan Verifikasi
+                      {resendingVerification ? 'Mengirim Ulang...' : 'Kirim Ulang Tautan Verifikasi'}
                     </button>
                     <button
                       type="button"
-                      onClick={onSignOutUnverified}
+                      onClick={async () => {
+                        setAuthError(null);
+                        await onSignOutUnverified();
+                      }}
                       className="text-xs font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                     >
-                      Gunakan Akun Lain / Keluar
+                      Gunakan Akun Lain / Masuk dengan Google
                     </button>
                   </div>
                 </div>
@@ -318,25 +410,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                     </button>
                   </div>
 
-                  {authError && (
-                    <div
-                      role="alert"
-                      className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs leading-relaxed text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-200"
-                    >
-                      <p>{authError}</p>
-                      {authError.includes('Firebase Console') && (
-                        <a
-                          href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1.5 font-semibold underline hover:text-rose-950 dark:hover:text-white"
-                        >
-                          <span>Buka Firebase Console → Sign-in method</span>
-                          <i className="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true" />
-                        </a>
-                      )}
-                    </div>
-                  )}
+                  {authError && renderAuthErrorBox(authError)}
 
                   <form onSubmit={handleEmailAuth} className="mt-5 space-y-4">
                     {mode === 'register' && (

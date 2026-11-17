@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
+import { applyActionCode, onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
   auth,
   getQuotaUpgradeUrl,
@@ -194,6 +194,55 @@ export default function App() {
       throw new Error(friendly);
     }
   }, [notify]);
+
+  // Handle Firebase email verification links (?mode=verifyEmail&oobCode=... or ?verified=1)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode');
+    const oobCode = params.get('oobCode');
+
+    if (mode === 'verifyEmail' && oobCode) {
+      applyActionCode(auth, oobCode)
+        .then(async () => {
+          window.history.replaceState({}, '', window.location.pathname);
+          if (auth.currentUser) {
+            await auth.currentUser.reload();
+            await auth.currentUser.getIdToken(true);
+            if (auth.currentUser.emailVerified) {
+              setUnverifiedUser(null);
+              setFirebaseUser(auth.currentUser);
+              await hydrateUserSession(auth.currentUser);
+            }
+          }
+          notify('success', 'Email berhasil diverifikasi! Silakan masuk atau lanjutkan ke dashboard.');
+        })
+        .catch((err: unknown) => {
+          window.history.replaceState({}, '', window.location.pathname);
+          notify(
+            'error',
+            err instanceof Error
+              ? err.message
+              : 'Tautan verifikasi email tidak valid atau sudah kedaluwarsa.'
+          );
+        });
+    } else if (params.get('verified') === '1') {
+      window.history.replaceState({}, '', window.location.pathname);
+      if (auth.currentUser) {
+        auth.currentUser
+          .reload()
+          .then(async () => {
+            if (auth.currentUser?.emailVerified) {
+              await auth.currentUser.getIdToken(true);
+              setUnverifiedUser(null);
+              setFirebaseUser(auth.currentUser);
+              await hydrateUserSession(auth.currentUser);
+              notify('success', 'Email berhasil diverifikasi!');
+            }
+          })
+          .catch(() => undefined);
+      }
+    }
+  }, [hydrateUserSession, notify]);
 
   // Firebase Auth listener
   useEffect(() => {
@@ -431,7 +480,7 @@ export default function App() {
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
           unverifiedUser={unverifiedUser}
-          onVerificationRefreshed={async () => {
+          onVerificationRefreshed={async (silent = false) => {
             if (!auth.currentUser) return;
             await auth.currentUser.reload();
             if (auth.currentUser.emailVerified) {
@@ -444,7 +493,7 @@ export default function App() {
               } catch (err: unknown) {
                 notify('error', err instanceof Error ? err.message : 'Gagal memuat profil dari database.');
               }
-            } else {
+            } else if (!silent) {
               notify('info', 'Email belum terverifikasi. Periksa kotak masuk atau folder spam Anda.');
             }
           }}
