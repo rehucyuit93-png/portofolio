@@ -58,7 +58,10 @@
 1. Buka **Firebase Console** -> **Authentication** -> **Sign-in method**:
    - **Google**: Aktif secara otomatis saat provisioning.
    - **Email/Password**: Aktifkan provider **Email/Password** bila ingin mengizinkan registrasi dan login dengan email/kata sandi.
-2. Buka **Firebase Console** -> **Storage** -> pastikan bucket Storage aktif, lalu deploy aturan `storage.rules`.
+2. **Authorized domains** (penting jika deploy ke Vercel/Netlify/domain kustom):
+   - Buka **Firebase Console** -> **Authentication** -> **Settings** -> **Authorized domains**.
+   - Klik **Add domain** lalu masukkan domain deployment Anda (contoh: `portofolio-sigma-jet-99.vercel.app`) agar tombol **Login dengan Google** berfungsi di domain tersebut.
+3. Buka **Firebase Console** -> **Storage** -> pastikan bucket Storage aktif, lalu deploy aturan `storage.rules`.
 
 ## 4. Panduan Deployment ke Firebase Hosting
 1. Instal Firebase CLI:

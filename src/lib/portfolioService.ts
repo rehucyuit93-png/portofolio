@@ -132,6 +132,7 @@ const initInFlight = new Map<
 export async function ensureUserInitialized(params: {
   uid: string;
   email: string;
+  emailVerified?: boolean;
   displayName: string;
   photoURL?: string;
   preferredRole?: 'guru' | 'siswa';
@@ -151,6 +152,7 @@ export async function ensureUserInitialized(params: {
 async function runEnsureUserInitialized(params: {
   uid: string;
   email: string;
+  emailVerified?: boolean;
   displayName: string;
   photoURL?: string;
   preferredRole?: 'guru' | 'siswa';
@@ -172,7 +174,9 @@ async function runEnsureUserInitialized(params: {
     handleFirestoreError(error, OperationType.GET, `users/${params.uid}`);
   }
 
-  const isBootstrapAdmin = safeEmail.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+  const isBootstrapAdmin =
+    Boolean(params.emailVerified) &&
+    safeEmail.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
   const defaultUsername = generateDefaultUsername(safeDisplayName, params.uid);
 
   let account: UserAccount;

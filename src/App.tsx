@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { applyActionCode, onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
   auth,
+  formatAuthErrorMessage,
   getQuotaUpgradeUrl,
+  sendVerificationEmailSafe,
   testFirestoreConnection,
   type FirestoreConnectionStatus,
 } from './lib/firebase';
@@ -54,7 +56,7 @@ export default function App() {
 
   const [authReady, setAuthReady] = useState(false);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [unverifiedUser, setUnverifiedUser] = useState<User | null>(null);
+  const [emailVerified, setEmailVerified] = useState(false);
 
   const [dbStatus, setDbStatus] = useState<FirestoreConnectionStatus | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
@@ -136,6 +138,7 @@ export default function App() {
       const init = await ensureUserInitialized({
         uid: user.uid,
         email: user.email || '',
+        emailVerified: user.emailVerified,
         displayName: pending.fullName || user.displayName || user.email?.split('@')[0] || 'Pengguna',
         photoURL: user.photoURL || '',
         preferredRole: pending.role,
@@ -209,12 +212,12 @@ export default function App() {
             await auth.currentUser.reload();
             await auth.currentUser.getIdToken(true);
             if (auth.currentUser.emailVerified) {
-              setUnverifiedUser(null);
               setFirebaseUser(auth.currentUser);
+              setEmailVerified(true);
               await hydrateUserSession(auth.currentUser);
             }
           }
-          notify('success', 'Email berhasil diverifikasi! Silakan masuk atau lanjutkan ke dashboard.');
+          notify('success', 'Email berhasil diverifikasi! Silakan lanjutkan menggunakan dashboard.');
         })
         .catch((err: unknown) => {
           window.history.replaceState({}, '', window.location.pathname);
@@ -233,8 +236,8 @@ export default function App() {
           .then(async () => {
             if (auth.currentUser?.emailVerified) {
               await auth.currentUser.getIdToken(true);
-              setUnverifiedUser(null);
               setFirebaseUser(auth.currentUser);
+              setEmailVerified(true);
               await hydrateUserSession(auth.currentUser);
               notify('success', 'Email berhasil diverifikasi!');
             }
@@ -251,7 +254,7 @@ export default function App() {
         loggedUidRef.current = null;
         listenerNotifiedRef.current = false;
         setFirebaseUser(null);
-        setUnverifiedUser(null);
+        setEmailVerified(false);
         setSessionError(null);
         setAccount(null);
         setProfile(null);
@@ -266,15 +269,8 @@ export default function App() {
         return;
       }
 
-      if (!user.emailVerified) {
-        setUnverifiedUser(user);
-        setFirebaseUser(null);
-        setAuthReady(true);
-        return;
-      }
-
-      setUnverifiedUser(null);
       setFirebaseUser(user);
+      setEmailVerified(user.emailVerified);
       try {
         await hydrateUserSession(user);
       } catch (err: unknown) {
@@ -479,28 +475,6 @@ export default function App() {
         <AuthView
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-          unverifiedUser={unverifiedUser}
-          onVerificationRefreshed={async (silent = false) => {
-            if (!auth.currentUser) return;
-            await auth.currentUser.reload();
-            if (auth.currentUser.emailVerified) {
-              await auth.currentUser.getIdToken(true);
-              setUnverifiedUser(null);
-              setFirebaseUser(auth.currentUser);
-              try {
-                await hydrateUserSession(auth.currentUser);
-                notify('success', 'Email berhasil diverifikasi!');
-              } catch (err: unknown) {
-                notify('error', err instanceof Error ? err.message : 'Gagal memuat profil dari database.');
-              }
-            } else if (!silent) {
-              notify('info', 'Email belum terverifikasi. Periksa kotak masuk atau folder spam Anda.');
-            }
-          }}
-          onSignOutUnverified={async () => {
-            await signOut(auth);
-            setUnverifiedUser(null);
-          }}
           onOpenSamplePortfolio={(slug) => navigatePublicPortfolio(slug)}
           onNotify={notify}
         />
@@ -519,6 +493,31 @@ export default function App() {
         account={account}
         profile={profile}
         settings={settings}
+        emailVerified={emailVerified}
+        onSendVerificationEmail={async () => {
+          if (!auth.currentUser) return;
+          try {
+            await sendVerificationEmailSafe(auth.currentUser);
+            notify(
+              'success',
+              `Email verifikasi dikirim ke ${auth.currentUser.email}. Periksa Kotak Masuk atau folder Spam.`
+            );
+          } catch (err: unknown) {
+            notify('error', formatAuthErrorMessage(err).message);
+          }
+        }}
+        onRefreshVerification={async () => {
+          if (!auth.currentUser) return;
+          await auth.currentUser.reload();
+          if (auth.currentUser.emailVerified) {
+            await auth.currentUser.getIdToken(true);
+            setFirebaseUser(auth.currentUser);
+            setEmailVerified(true);
+            notify('success', 'Email Anda sudah terverifikasi!');
+          } else {
+            notify('info', 'Email belum terverifikasi. Periksa kotak masuk atau folder spam.');
+          }
+        }}
         documents={documents}
         certificates={certificates}
         achievements={achievements}

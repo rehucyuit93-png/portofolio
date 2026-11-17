@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   browserLocalPersistence,
   browserSessionPersistence,
@@ -7,7 +7,6 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   updateProfile,
-  type User,
 } from 'firebase/auth';
 import {
   auth,
@@ -23,9 +22,6 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface AuthViewProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
-  unverifiedUser: User | null;
-  onVerificationRefreshed: (silent?: boolean) => Promise<void>;
-  onSignOutUnverified: () => Promise<void>;
   onOpenSamplePortfolio: (username: string) => void;
   onNotify: (type: 'success' | 'error' | 'info', message: string) => void;
 }
@@ -40,9 +36,6 @@ interface AuthErrorState {
 export const AuthView: React.FC<AuthViewProps> = ({
   theme,
   onToggleTheme,
-  unverifiedUser,
-  onVerificationRefreshed,
-  onSignOutUnverified,
   onOpenSamplePortfolio,
   onNotify,
 }) => {
@@ -55,29 +48,8 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [jabatanKelas, setJabatanKelas] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [resendingVerification, setResendingVerification] = useState(false);
-  const [verificationNote, setVerificationNote] = useState<string | null>(null);
   const [authError, setAuthError] = useState<AuthErrorState | null>(null);
   const [publicSlugLookup, setPublicSlugLookup] = useState('');
-
-  // Auto-check email verification when user returns to tab after clicking email link
-  useEffect(() => {
-    if (!unverifiedUser) return;
-    const checkNow = () => {
-      onVerificationRefreshed(true).catch(() => undefined);
-    };
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') checkNow();
-    };
-    window.addEventListener('focus', checkNow);
-    document.addEventListener('visibilitychange', handleVisibility);
-    const interval = window.setInterval(checkNow, 5000);
-    return () => {
-      window.removeEventListener('focus', checkNow);
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.clearInterval(interval);
-    };
-  }, [unverifiedUser, onVerificationRefreshed]);
 
   const handleCopyDomain = async (domain: string) => {
     try {
@@ -95,26 +67,31 @@ export const AuthView: React.FC<AuthViewProps> = ({
     >
       <p>{errState.message}</p>
       {errState.isUnauthorizedDomain && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          {errState.domain && (
-            <button
-              type="button"
-              onClick={() => handleCopyDomain(errState.domain!)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-2.5 py-1 font-mono-tabular font-semibold text-rose-900 hover:bg-rose-100 dark:border-rose-800 dark:bg-slate-900 dark:text-rose-100"
+        <div className="mt-2.5 space-y-2">
+          <p className="text-[11px] text-rose-700 dark:text-rose-300">
+            Catatan: Login & Daftar menggunakan <strong>Email & Kata Sandi</strong> di atas tetap dapat langsung digunakan tanpa perlu menunggu pengaturan domain.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {errState.domain && (
+              <button
+                type="button"
+                onClick={() => handleCopyDomain(errState.domain!)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-2.5 py-1 font-mono-tabular font-semibold text-rose-900 hover:bg-rose-100 dark:border-rose-800 dark:bg-slate-900 dark:text-rose-100"
+              >
+                <i className="fa-solid fa-copy text-[10px]" aria-hidden="true" />
+                <span>Salin: {errState.domain}</span>
+              </button>
+            )}
+            <a
+              href={getAuthorizedDomainsUrl()}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 font-semibold underline hover:text-rose-950 dark:hover:text-white"
             >
-              <i className="fa-solid fa-copy text-[10px]" aria-hidden="true" />
-              <span>Salin: {errState.domain}</span>
-            </button>
-          )}
-          <a
-            href={getAuthorizedDomainsUrl()}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 font-semibold underline hover:text-rose-950 dark:hover:text-white"
-          >
-            <span>Buka Firebase Console → Authorized domains</span>
-            <i className="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true" />
-          </a>
+              <span>Buka Firebase Console → Authorized domains</span>
+              <i className="fa-solid fa-arrow-up-right-from-square text-[10px]" aria-hidden="true" />
+            </a>
+          </div>
         </div>
       )}
       {errState.isProviderDisabled && (
@@ -150,22 +127,14 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
-    setVerificationNote(null);
     setLoading(true);
 
     try {
       await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
 
       if (mode === 'login') {
-        const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
-        if (cred.user.emailVerified) {
-          onNotify('success', 'Selamat datang kembali di KaryaLoka.');
-        } else {
-          setVerificationNote(
-            'Akun Anda belum terverifikasi. Klik "Kirim Ulang Tautan Verifikasi" jika email belum masuk.'
-          );
-          onNotify('info', 'Silakan verifikasi email Anda terlebih dahulu.');
-        }
+        await signInWithEmailAndPassword(auth, email.trim(), password);
+        onNotify('success', 'Selamat datang kembali di KaryaLoka.');
       } else if (mode === 'register') {
         if (!fullName.trim()) {
           throw new Error('Nama lengkap wajib diisi.');
@@ -181,20 +150,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
             jabatanKelas: jabatanKelas.trim(),
           })
         );
-        try {
-          await sendVerificationEmailSafe(cred.user);
-          setVerificationNote(
-            `Email verifikasi telah dikirim ke ${cred.user.email} pada ${new Date().toLocaleTimeString('id-ID')}. Periksa Kotak Masuk, folder Spam, atau Promosi (pengirim: noreply@gen-lang-client-0131469651.firebaseapp.com).`
-          );
-          onNotify(
-            'success',
-            'Akun dibuat! Tautan verifikasi telah dikirim ke email Anda. Periksa kotak masuk atau folder spam.'
-          );
-        } catch (verErr: unknown) {
-          const formatted = formatAuthErrorMessage(verErr);
-          setAuthError(formatted);
-          onNotify('error', `Akun dibuat, namun gagal mengirim email verifikasi: ${formatted.message}`);
-        }
+        // Send verification email in background without blocking dashboard access
+        sendVerificationEmailSafe(cred.user).catch(() => undefined);
+        onNotify('success', 'Akun berhasil dibuat! Membuka dashboard portofolio Anda...');
       } else if (mode === 'reset') {
         await sendPasswordResetSafe(email.trim());
         onNotify('success', 'Tautan reset password telah dikirim ke alamat email Anda.');
@@ -285,86 +243,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
           {/* Right auth card */}
           <div id="akses-akun" className="lg:col-span-5 flex flex-col">
             <div className="glass-panel flex-1 rounded-2xl border border-slate-200 p-6 shadow-sm sm:p-8 dark:border-slate-800">
-              {unverifiedUser ? (
-                <div className="flex h-full flex-col justify-center space-y-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
-                    <i className="fa-solid fa-envelope-circle-check text-xl" aria-hidden="true" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-                      Verifikasi Email Diperlukan
-                    </h2>
-                    <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                      Tautan verifikasi ditujukan ke{' '}
-                      <span className="font-semibold text-slate-900 dark:text-white">
-                        {unverifiedUser.email}
-                      </span>
-                      . Periksa Kotak Masuk, folder <strong>Spam</strong>, atau tab <strong>Promosi</strong> untuk pengirim{' '}
-                      <span className="font-mono-tabular text-xs">noreply@gen-lang-client-0131469651.firebaseapp.com</span>.
-                    </p>
-                  </div>
-                  {verificationNote && (
-                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs leading-relaxed text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/50 dark:text-blue-200">
-                      {verificationNote}
-                    </div>
-                  )}
-                  {authError && renderAuthErrorBox(authError)}
-                  <div className="flex flex-col gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => onVerificationRefreshed(false)}
-                      className="w-full rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-                    >
-                      Saya Sudah Verifikasi Email
-                    </button>
-                    <button
-                      type="button"
-                      disabled={resendingVerification}
-                      onClick={async () => {
-                        setAuthError(null);
-                        setResendingVerification(true);
-                        try {
-                          await sendVerificationEmailSafe(unverifiedUser);
-                          setVerificationNote(
-                            `Email verifikasi baru dikirim ke ${unverifiedUser.email} pada ${new Date().toLocaleTimeString('id-ID')}. Jika tidak masuk dalam 1-2 menit, cek folder Spam atau gunakan Login dengan Google.`
-                          );
-                          onNotify('success', 'Email verifikasi dikirim ulang. Cek kotak masuk atau folder spam.');
-                        } catch (err: unknown) {
-                          const formatted = formatAuthErrorMessage(err);
-                          setAuthError(formatted);
-                          onNotify('error', formatted.message);
-                        } finally {
-                          setResendingVerification(false);
-                        }
-                      }}
-                      className="w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                    >
-                      {resendingVerification ? 'Mengirim Ulang...' : 'Kirim Ulang Tautan Verifikasi'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={handleGoogleLogin}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800"
-                    >
-                      <i className="fa-brands fa-google text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                      <span>Masuk Instan dengan Google (Tanpa Verifikasi Email)</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setAuthError(null);
-                        setVerificationNote(null);
-                        await onSignOutUnverified();
-                      }}
-                      className="pt-1 text-xs font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                    >
-                      Kembali ke Halaman Login / Daftar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
+              <>
                   <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-4 dark:border-slate-800">
                     <div>
                       <h2 className="text-xl font-bold text-slate-900 dark:text-white">
@@ -575,7 +454,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
                     <span>Login dengan Google</span>
                   </button>
                 </>
-              )}
             </div>
           </div>
         </div>

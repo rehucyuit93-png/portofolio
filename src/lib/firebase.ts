@@ -39,6 +39,20 @@ export function getAuthProvidersUrl(): string {
   return `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`;
 }
 
+function isContinueUriOrDomainError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code || '';
+  const raw = err instanceof Error ? err.message : String(err);
+  return (
+    code === 'auth/unauthorized-continue-uri' ||
+    code === 'auth/unauthorized-domain' ||
+    code === 'auth/invalid-continue-uri' ||
+    code === 'auth/missing-continue-uri' ||
+    raw.includes('auth/unauthorized-continue-uri') ||
+    raw.includes('auth/unauthorized-domain') ||
+    raw.includes('auth/invalid-continue-uri')
+  );
+}
+
 export async function sendVerificationEmailSafe(
   user: User
 ): Promise<{ usedFallbackDomain: boolean }> {
@@ -49,9 +63,8 @@ export async function sendVerificationEmailSafe(
     });
     return { usedFallbackDomain: false };
   } catch (err: unknown) {
-    const code = (err as { code?: string })?.code || '';
-    if (code === 'auth/unauthorized-domain' || code === 'auth/invalid-continue-uri') {
-      // Fallback to Firebase's default authDomain handler when preview domain isn't allowlisted yet
+    if (isContinueUriOrDomainError(err)) {
+      // Fallback to Firebase's default authDomain handler when current domain isn't allowlisted yet
       await sendEmailVerification(user);
       return { usedFallbackDomain: true };
     }
@@ -66,8 +79,7 @@ export async function sendPasswordResetSafe(email: string): Promise<void> {
       handleCodeInApp: false,
     });
   } catch (err: unknown) {
-    const code = (err as { code?: string })?.code || '';
-    if (code === 'auth/unauthorized-domain' || code === 'auth/invalid-continue-uri') {
+    if (isContinueUriOrDomainError(err)) {
       await sendPasswordResetEmail(auth, email);
       return;
     }
@@ -85,7 +97,12 @@ export function formatAuthErrorMessage(err: unknown): {
   const raw = err instanceof Error ? err.message : String(err);
   const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
 
-  if (code === 'auth/unauthorized-domain' || raw.includes('auth/unauthorized-domain')) {
+  if (
+    code === 'auth/unauthorized-domain' ||
+    code === 'auth/unauthorized-continue-uri' ||
+    raw.includes('auth/unauthorized-domain') ||
+    raw.includes('auth/unauthorized-continue-uri')
+  ) {
     return {
       message: `Domain "${currentHost}" belum diizinkan di Firebase Authentication. Tambahkan domain ini pada Firebase Console -> Authentication -> Settings -> Authorized domains.`,
       isUnauthorizedDomain: true,

@@ -56,6 +56,9 @@ interface DashboardShellProps {
   onSeedSampleData: () => Promise<void>;
   onLogout: () => Promise<void>;
   onNotify: (type: 'success' | 'error' | 'info', message: string) => void;
+  emailVerified?: boolean;
+  onSendVerificationEmail?: () => Promise<void>;
+  onRefreshVerification?: () => Promise<void>;
 }
 
 const MENU_ITEMS: Array<{ id: DashboardSection; label: string; icon: string }> = [
@@ -73,6 +76,8 @@ const MENU_ITEMS: Array<{ id: DashboardSection; label: string; icon: string }> =
 
 export const DashboardShell: React.FC<DashboardShellProps> = (props) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [dismissedVerifyBanner, setDismissedVerifyBanner] = useState(false);
+  const [sendingVerify, setSendingVerify] = useState(false);
 
   const activeLabel =
     props.activeSection === 'admin'
@@ -246,6 +251,52 @@ export const DashboardShell: React.FC<DashboardShellProps> = (props) => {
 
         {/* Viewport */}
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
+          {props.emailVerified === false && !dismissedVerifyBanner && (
+            <div className="no-print mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/50 dark:text-amber-200">
+              <div className="flex items-center gap-2.5">
+                <i className="fa-solid fa-envelope-open-text text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                <span>
+                  Email <strong>{props.account.email}</strong> belum terverifikasi (opsional). Anda tetap dapat menggunakan seluruh fitur portofolio secara normal.
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {props.onSendVerificationEmail && (
+                  <button
+                    type="button"
+                    disabled={sendingVerify}
+                    onClick={async () => {
+                      setSendingVerify(true);
+                      try {
+                        await props.onSendVerificationEmail?.();
+                      } finally {
+                        setSendingVerify(false);
+                      }
+                    }}
+                    className="rounded-lg bg-amber-600 px-3 py-1.5 font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+                  >
+                    {sendingVerify ? 'Mengirim...' : 'Kirim Email Verifikasi'}
+                  </button>
+                )}
+                {props.onRefreshVerification && (
+                  <button
+                    type="button"
+                    onClick={() => props.onRefreshVerification?.()}
+                    className="rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-100"
+                  >
+                    Cek Status
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDismissedVerifyBanner(true)}
+                  className="rounded-lg px-2 py-1.5 font-medium text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/50"
+                  aria-label="Tutup pemberitahuan"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          )}
           <motion.div
             key={props.activeSection}
             initial={{ opacity: 0, y: 6 }}

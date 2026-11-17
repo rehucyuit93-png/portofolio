@@ -33,17 +33,13 @@ service cloud.firestore {
       return request.auth.token.email_verified == true;
     }
 
-    function isVerifiedUser() {
-      return isSignedIn() && isEmailVerified();
-    }
-
     function isOwner(userId) {
-      return isVerifiedUser() && request.auth.uid == userId;
+      return isSignedIn() && request.auth.uid == userId;
     }
 
     function isAdmin() {
-      return isVerifiedUser() && (
-        request.auth.token.email == 'rehu.cyuit93@gmail.com' ||
+      return isSignedIn() && (
+        (request.auth.token.email == 'rehu.cyuit93@gmail.com' && isEmailVerified()) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -229,8 +225,8 @@ service cloud.firestore {
     // Collection rules
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(userId)
         && isValidUserAccount(incoming())
         && incoming().createdAt == request.time
@@ -239,7 +235,7 @@ service cloud.firestore {
           (request.auth.uid == userId && incoming().uid == request.auth.uid && incoming().role in ['guru', 'siswa'] && incoming().isActive == true) ||
           isAdmin()
         );
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(userId)
         && isValidUserAccount(incoming())
         && incoming().uid == existing().uid
@@ -262,14 +258,14 @@ service cloud.firestore {
 
     match /profiles/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(userId)
         && isValidUserProfile(incoming())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
         && ((request.auth.uid == userId && incoming().uid == request.auth.uid) || isAdmin());
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(userId)
         && isValidUserProfile(incoming())
         && incoming().uid == existing().uid
@@ -283,15 +279,15 @@ service cloud.firestore {
     }
 
     match /documents/{docId} {
-      allow get: if isValidId(docId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow get: if isValidId(docId) && isSignedIn() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(docId)
         && isValidPortfolioDocument(incoming())
         && incoming().uid == request.auth.uid
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(docId)
         && isValidPortfolioDocument(incoming())
         && incoming().uid == existing().uid
@@ -301,19 +297,19 @@ service cloud.firestore {
           (existing().uid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'year', 'description', 'fileName', 'fileType', 'fileSize', 'fileUrl', 'storagePath', 'isPublic', 'updatedAt'])) ||
           isAdmin()
         );
-      allow delete: if isValidId(docId) && isVerifiedUser() && (existing().uid == request.auth.uid || isAdmin());
+      allow delete: if isValidId(docId) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
     }
 
     match /certificates/{certId} {
-      allow get: if isValidId(certId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow get: if isValidId(certId) && isSignedIn() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(certId)
         && isValidCertificate(incoming())
         && incoming().uid == request.auth.uid
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(certId)
         && isValidCertificate(incoming())
         && incoming().uid == existing().uid
@@ -323,19 +319,19 @@ service cloud.firestore {
           (existing().uid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['eventName', 'organizer', 'year', 'description', 'fileName', 'fileUrl', 'storagePath', 'isPublic', 'updatedAt'])) ||
           isAdmin()
         );
-      allow delete: if isValidId(certId) && isVerifiedUser() && (existing().uid == request.auth.uid || isAdmin());
+      allow delete: if isValidId(certId) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
     }
 
     match /achievements/{achId} {
-      allow get: if isValidId(achId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow get: if isValidId(achId) && isSignedIn() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(achId)
         && isValidAchievement(incoming())
         && incoming().uid == request.auth.uid
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(achId)
         && isValidAchievement(incoming())
         && incoming().uid == existing().uid
@@ -345,19 +341,19 @@ service cloud.firestore {
           (existing().uid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'level', 'year', 'description', 'photoUrl', 'storagePath', 'isPublic', 'updatedAt'])) ||
           isAdmin()
         );
-      allow delete: if isValidId(achId) && isVerifiedUser() && (existing().uid == request.auth.uid || isAdmin());
+      allow delete: if isValidId(achId) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
     }
 
     match /activities/{actId} {
-      allow get: if isValidId(actId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow get: if isValidId(actId) && isSignedIn() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(actId)
         && isValidActivity(incoming())
         && incoming().uid == request.auth.uid
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(actId)
         && isValidActivity(incoming())
         && incoming().uid == existing().uid
@@ -367,18 +363,18 @@ service cloud.firestore {
           (existing().uid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'date', 'year', 'description', 'photoUrl', 'storagePath', 'isPublic', 'updatedAt'])) ||
           isAdmin()
         );
-      allow delete: if isValidId(actId) && isVerifiedUser() && (existing().uid == request.auth.uid || isAdmin());
+      allow delete: if isValidId(actId) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
     }
 
     match /galleries/{galId} {
-      allow get: if isValidId(galId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow get: if isValidId(galId) && isSignedIn() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(galId)
         && isValidGalleryItem(incoming())
         && incoming().uid == request.auth.uid
         && incoming().createdAt == request.time;
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(galId)
         && isValidGalleryItem(incoming())
         && incoming().uid == existing().uid
@@ -387,13 +383,13 @@ service cloud.firestore {
           (existing().uid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'album', 'year', 'caption', 'isPublic'])) ||
           isAdmin()
         );
-      allow delete: if isValidId(galId) && isVerifiedUser() && (existing().uid == request.auth.uid || isAdmin());
+      allow delete: if isValidId(galId) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
     }
 
     match /logs/{logId} {
-      allow get: if isValidId(logId) && isVerifiedUser() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow get: if isValidId(logId) && isSignedIn() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(logId)
         && isValidAuditLog(incoming())
         && incoming().uid == request.auth.uid
@@ -404,14 +400,14 @@ service cloud.firestore {
 
     match /settings/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser()
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
         && isValidId(userId)
         && isValidUserSettings(incoming())
         && request.auth.uid == userId
         && incoming().uid == request.auth.uid
         && incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(userId)
         && isValidUserSettings(incoming())
         && incoming().uid == existing().uid
@@ -427,16 +423,16 @@ service cloud.firestore {
       allow get: if isValidUsername(username) && (
         resource == null ||
         resource.data.isPublished == true ||
-        (isVerifiedUser() && (resource.data.uid == request.auth.uid || isAdmin()))
+        (isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin()))
       );
       allow list: if isAdmin();
-      allow create: if isVerifiedUser()
+      allow create: if isSignedIn()
         && isValidUsername(username)
         && isValidPublicPortfolio(incoming())
         && incoming().username == username
         && incoming().updatedAt == request.time
         && (incoming().uid == request.auth.uid || isAdmin());
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidUsername(username)
         && isValidPublicPortfolio(incoming())
         && incoming().uid == existing().uid
@@ -446,7 +442,7 @@ service cloud.firestore {
           (existing().uid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'role', 'nipNisn', 'jabatanKelas', 'education', 'expertise', 'bio', 'photoURL', 'isPublished', 'featuredDocuments', 'featuredCertificates', 'featuredAchievements', 'featuredGalleries', 'updatedAt'])) ||
           isAdmin()
         );
-      allow delete: if isValidUsername(username) && isVerifiedUser() && (existing().uid == request.auth.uid || isAdmin());
+      allow delete: if isValidUsername(username) && isSignedIn() && (existing().uid == request.auth.uid || isAdmin());
     }
   }
 }
